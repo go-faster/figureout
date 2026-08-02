@@ -4,6 +4,10 @@
   "properties": {
     "port": {
       "type": "integer"
+    },
+    "timeout": {
+      "format": "duration",
+      "type": "string"
     }
   },
   "required": [

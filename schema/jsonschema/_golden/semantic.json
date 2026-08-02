@@ -6,13 +6,6 @@
       "default": false,
       "type": "boolean"
     },
-    "grace": {
-      "format": "duration",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "level": {
       "default": "info",
       "enum": [
