@@ -4,9 +4,9 @@ Descriptor-driven configuration for Go: declare the configuration once, derive
 decoding, validation, defaults, documentation and schemas from that one
 declaration.
 
-This is a scaffold of the design in [`_ref/configuration-library-design.md`](_ref/configuration-library-design.md),
-implemented as a walking skeleton: the core plus one source (environment
-variables) and one target (JSON Schema), wired end to end.
+This is a scaffold of the design in [`_ref/configuration-library-design.md`](_ref/configuration-library-design.md):
+the core, three sources (JSON, YAML, environment variables) and one target
+(JSON Schema), wired end to end.
 
 ```go
 type Config struct {
@@ -26,7 +26,10 @@ var ConfigDescriptor = figureout.MustDerive(
 	},
 )
 
-cfg, report, err := ConfigDescriptor.Resolve(env.Current(env.Prefix("APP_")))
+cfg, report, err := ConfigDescriptor.Resolve(
+	yaml.File("config.yaml"),
+	env.Current(env.Prefix("APP_")),   // later sources win
+)
 schema, diags, err := jsonschema.Generate(ConfigDescriptor, jsonschema.Semantic())
 ```
 
@@ -35,8 +38,46 @@ schema, diags, err := jsonschema.Generate(ConfigDescriptor, jsonschema.Semantic(
 | Package | Contents |
 | --- | --- |
 | `figureout` | descriptor, builder, pointer binding, completeness, constraints, enums, unions, carriers, diagnostics, resolution |
+| `figureout/source/json` | JSON source, with file:line:column provenance |
+| `figureout/source/yaml` | YAML source, tag-aware, anchors resolved |
 | `figureout/source/env` | environment variable source |
 | `figureout/schema/jsonschema` | JSON Schema target |
+
+## Sources
+
+Every source decodes into a layer rather than writing into the struct; layers
+merge in order, and validation runs once on the merged value. The report keeps
+the origin of each value:
+
+```go
+cfg, report, err := ConfigDescriptor.Resolve(
+	json.File("config.json"),
+	yaml.File("config.yaml", yaml.Optional()),
+	env.Current(env.Prefix("APP_")),
+)
+
+report.OriginOf("server.port")   // env APP_PORT
+```
+
+```text
+port must be at most 65535
+  value: 70000
+  source: json config.json:4:13
+```
+
+JSON and YAML stay separate adapters, as the design requires, sharing only an
+internal document tree and the text scalar parser that env and YAML both need.
+The differences are the point:
+
+| | JSON | YAML | env |
+| --- | --- | --- | --- |
+| `8080` vs `"8080"` | distinct; a string needs `json.Accepts(json.String())` | distinct by tag: `!!int` vs `!!str` | everything is text |
+| null | `null` | `null`, `~`, or empty | not representable |
+| positions | line and column | line and column | variable name |
+| anchors | — | resolved before binding | — |
+
+Both name their fields with `Name`, `Alias` and `Skip`, and both accept
+`DisallowUnknownFields()` to report members no field claims.
 
 ## Presence
 
@@ -88,7 +129,8 @@ ad-hoc value set with no provider is `.Enum(values...)` on the builder.
 `OneOf` is a **type sum**: a tagged union selecting between alternative shapes.
 A discriminator is required, so decoding failures name the tag rather than
 reporting every variant's errors, and generation maps onto JSON Schema
-`oneOf` + `const`:
+`oneOf` + `const`. A union is why the tree sources parse a whole document
+before binding: the tag has to be read before its siblings can be interpreted.
 
 ```go
 figureout.OneOf(s, &c.Backend, "backend",
@@ -99,7 +141,28 @@ figureout.OneOf(s, &c.Backend, "backend",
 ```
 
 Variant fields must be pointers: the non-nil pointer is what records the
-selection.
+selection. The tag is laid out inline, as a sibling of the variant's members,
+which is what the emitted JSON Schema describes and what the env source does
+with `BACKEND_TYPE` alongside `BACKEND_BUCKET`:
+
+```yaml
+backend:
+  type: s3
+  bucket: configs
+```
+
+## Library choices
+
+**JSON uses `encoding/json`.** Its `Token` and `InputOffset` are exported, so
+every node carries an exact offset and a diagnostic can say
+`config.json:4:13`. `go-faster/jx` is faster, but its `offset()` is
+unexported, so provenance would degrade to the property path.
+`encoding/json/v2` is excluded by build constraints on the current toolchain,
+and a library cannot ask its consumers to set `GOEXPERIMENT=jsonv2`.
+
+**YAML uses `go-faster/yaml`.** `Node` carries `Line` and `Column`, resolves
+tags, and exposes anchors. `yaml.v4` was considered but is not yet available
+here.
 
 ## Deviations from the design document
 
@@ -141,16 +204,16 @@ duplicate.
 
 ## Not yet implemented
 
-The design's later phases: YAML, TOML, JSON and flag sources; CUE; generated
-documentation; collection merge policies; code generation; optimized unsafe
-accessors. `NullableOf` is modelled and materialized, but no current source
-produces an explicit null, since environment variables cannot express one.
+The design's later phases: TOML and flag sources; CUE source and schema
+output; generated documentation; collection merge policies; code generation;
+optimized unsafe accessors.
 
 ## Development
 
 ```console
 go test ./...
 go test ./source/env/ -run xxx -fuzz FuzzParse
+go test ./source/json/ -run xxx -fuzz FuzzParse
 go test ./schema/jsonschema/ -update   # refresh golden files
 golangci-lint fmt ./... && golangci-lint run ./...
 ```
