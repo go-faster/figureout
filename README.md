@@ -50,7 +50,7 @@ together:
 
 ```console
 go run ./examples/service                        # resolve and print provenance
-APP_SERVER_PORT=9090 go run ./examples/service   # environment wins over the file
+APP_SERVER_LISTEN_PORT=9090 go run ./examples/service  # env wins over the file
 APP_SERVER_TIMEOUT=null go run ./examples/service # erase a value from the file
 go run ./examples/service -schema                # JSON Schema for JSON input
 go run ./examples/service -paths                 # every path, type and default
@@ -64,7 +64,7 @@ level=warn tags=[service production] limits=map[cpu:4 memory:8]
 
 provenance:
   server.address       yaml server.address examples/service/config.yaml:8:3
-  server.port          env APP_SERVER_PORT
+  server.port          env APP_SERVER_LISTEN_PORT
   server.timeout       yaml server.timeout examples/service/config.yaml:10:3
 ```
 
@@ -113,6 +113,28 @@ The differences are the point:
 
 Both name their fields with `Name`, `Alias` and `Skip`, and both accept
 `DisallowUnknownFields()` to report members no field claims.
+
+A name is **relative to the object that declares it**, so nesting composes and
+a nested field can never silently claim a top-level field's variable:
+
+```go
+// inside ServerDescriptor, nested under "server"
+figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT"))
+// reads APP_SERVER_LISTEN_PORT, not APP_LISTEN_PORT
+```
+
+For env, the whole derivation is pluggable — the default joins the segments
+with underscores and upper-cases them:
+
+```go
+env.Current(env.Names(func(f *figureout.FieldModel, segments []string) []string {
+	return []string{strings.ToUpper(strings.Join(segments, "__"))}
+}))
+```
+
+Whatever the naming produces is still collision-checked, so a function that
+flattens away a level is reported rather than silently binding two fields to
+one variable.
 
 ## Presence
 

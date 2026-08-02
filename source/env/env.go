@@ -4,7 +4,9 @@ package env
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/go-faster/errors"
 
@@ -34,6 +36,7 @@ func Prefix(p string) Option {
 type source struct {
 	prefix string
 	vars   map[string]string
+	naming Naming
 }
 
 // Current reads the process environment.
@@ -139,53 +142,88 @@ type entry struct {
 }
 
 // plan derives variable names for every field and checks for collisions.
+//
+// The walk is hierarchical rather than a pass over the flat field list,
+// because a name is relative to the object that declares it: a nested
+// descriptor contributes its own segment, and env.Name replaces only that
+// segment. A flat pass would let a nested field silently claim the same
+// variable as a top-level one.
 func (s *source) plan(m *figureout.Model) ([]entry, figureout.Diagnostics) {
-	var (
-		out    []entry
-		diags  figureout.Diagnostics
-		byName = map[string]string{}
-	)
+	p := &planner{source: s, byName: map[string]string{}}
+	p.object(m.Root, nil)
+	return p.out, p.diags
+}
 
-	add := func(e entry) {
-		for _, n := range e.names {
-			if prev, ok := byName[n]; ok {
-				diags = append(diags, figureout.Diagnostic{
-					Severity: figureout.SeverityError,
-					Code:     figureout.CodeSourceNameCollision,
-					Source:   Source,
-					Message:  "environment variable " + n + " is assigned to both " + prev + " and " + e.path,
-				})
-				return
+type planner struct {
+	source *source
+	out    []entry
+	diags  figureout.Diagnostics
+	byName map[string]string
+}
+
+func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
+	for _, f := range obj.Fields {
+		if proj, ok := f.Source(Source); ok && proj.Skip {
+			continue
+		}
+		own := append(slices.Clone(segments), segmentOf(f))
+
+		switch {
+		case f.Type.Union != nil:
+			path, _ := figureout.DiscriminatorPath(f)
+			p.add(entry{
+				path:          path,
+				names:         p.source.names(f, append(slices.Clone(own), f.Type.Union.Discriminator)),
+				field:         f,
+				discriminator: true,
+			})
+			// A variant's members are siblings of the tag, so they share the
+			// union's segments rather than nesting under the tag.
+			for _, variant := range f.Type.Union.Variants {
+				p.object(variant.Object, own)
 			}
-			byName[n] = e.path
+		case f.Type.Object != nil:
+			p.object(f.Type.Object, own)
+		default:
+			p.add(entry{path: f.Path, names: p.source.names(f, own), field: f})
 		}
-		out = append(out, e)
 	}
+}
 
-	for _, f := range m.Fields() {
-		if p, ok := f.Source(Source); ok && p.Skip {
-			continue
+func (p *planner) add(e entry) {
+	for _, n := range e.names {
+		if prev, ok := p.byName[n]; ok {
+			p.diags = append(p.diags, figureout.Diagnostic{
+				Severity: figureout.SeverityError,
+				Code:     figureout.CodeSourceNameCollision,
+				Source:   Source,
+				Message:  "environment variable " + n + " is assigned to both " + prev + " and " + e.path,
+			})
+			return
 		}
-		if f.Type.Object != nil {
-			continue // leaves are bound individually
-		}
-		if path, ok := figureout.DiscriminatorPath(f); ok {
-			add(entry{path: path, names: s.names(f, path), field: f, discriminator: true})
-			continue
-		}
-		add(entry{path: f.Path, names: s.names(f, f.Path), field: f})
+		p.byName[n] = e.path
 	}
-	return out, diags
+	p.out = append(p.out, e)
+}
+
+// segmentOf returns the field's own name segment, which [Name] replaces.
+func segmentOf(f *figureout.FieldModel) string {
+	if p, ok := f.Source(Source); ok && len(p.Names) > 0 {
+		return p.Names[0]
+	}
+	return f.Name
 }
 
 // names returns the accepted variable names, primary first, aliases after.
-func (s *source) names(f *figureout.FieldModel, path string) []string {
-	primary := derive(path)
+func (s *source) names(f *figureout.FieldModel, segments []string) []string {
+	naming := s.naming
+	if naming == nil {
+		naming = DefaultNaming
+	}
+
+	primary := naming(f, segments)
 	var aliases []string
 	if p, ok := f.Source(Source); ok {
-		if len(p.Names) > 0 {
-			primary = p.Names[0]
-		}
 		for _, o := range p.Options {
 			if a, ok := o.(aliasOption); ok {
 				aliases = append(aliases, a.names...)
@@ -193,25 +231,41 @@ func (s *source) names(f *figureout.FieldModel, path string) []string {
 		}
 	}
 
-	out := make([]string, 0, 1+len(aliases))
-	for _, n := range append([]string{primary}, aliases...) {
+	out := make([]string, 0, len(primary)+len(aliases))
+	for _, n := range append(primary, aliases...) {
 		out = append(out, s.prefix+n)
 	}
 	return out
 }
 
+// Naming derives the unprefixed variable names for a field.
+//
+// segments is the path from the descriptor root to the field, one entry per
+// level, with any [Name] override already applied. The first name returned is
+// the primary one; the rest are tried in order. The source prepends the
+// descriptor prefix and appends any [Alias] afterwards.
+type Naming func(f *figureout.FieldModel, segments []string) []string
+
+// DefaultNaming joins the segments with underscores and upper-cases the
+// result, so "server.listenPort" becomes "SERVER_LISTEN_PORT".
+func DefaultNaming(_ *figureout.FieldModel, segments []string) []string {
+	return []string{derive(strings.Join(segments, "."))}
+}
+
 // derive converts a canonical path to an environment variable name:
 // "server.listenPort" becomes "SERVER_LISTEN_PORT".
+//
+// Only camelCase boundaries split, so a name that is already upper case, such
+// as one given to [Name], survives intact.
 func derive(path string) string {
+	runes := []rune(path)
 	var sb strings.Builder
-	for i, r := range path {
+	for i, r := range runes {
 		switch {
-		case r == '.' || r == '-':
+		case r == '.' || r == '-' || r == ' ':
 			sb.WriteByte('_')
-		case r >= 'A' && r <= 'Z':
-			if i > 0 {
-				sb.WriteByte('_')
-			}
+		case unicode.IsUpper(r) && i > 0 && boundary(runes, i):
+			sb.WriteByte('_')
 			sb.WriteRune(r)
 		default:
 			sb.WriteRune(r)
@@ -220,8 +274,37 @@ func derive(path string) string {
 	return strings.ToUpper(sb.String())
 }
 
-// Name overrides the derived variable name. The descriptor prefix still
-// applies.
+// boundary reports whether an upper case rune starts a new word: either the
+// previous rune is lower case, or it ends a run of upper case ones.
+func boundary(runes []rune, i int) bool {
+	prev := runes[i-1]
+	if unicode.IsLower(prev) || unicode.IsDigit(prev) {
+		return true
+	}
+	return unicode.IsUpper(prev) && i+1 < len(runes) && unicode.IsLower(runes[i+1])
+}
+
+// Names replaces how variable names are derived.
+//
+//	env.Current(env.Names(func(f *figureout.FieldModel, segments []string) []string {
+//		return []string{strings.ToUpper(strings.Join(segments, "__"))}
+//	}))
+func Names(n Naming) Option {
+	return optionFunc(func(s *source) error {
+		if n == nil {
+			return errors.New("nil naming")
+		}
+		s.naming = n
+		return nil
+	})
+}
+
+// Name replaces the field's own name segment.
+//
+// The name is relative to the object that declares the field, so a nested
+// descriptor keeps its parent's segments: Name("listen_port") on a field of a
+// Server nested under "server" reads SERVER_LISTEN_PORT, not LISTEN_PORT. The
+// descriptor prefix still applies.
 func Name(name string) figureout.FieldOption {
 	return figureout.FieldOptionFunc(func(c figureout.FieldOptionContext) error {
 		if name == "" {

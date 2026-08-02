@@ -68,14 +68,13 @@ type Config struct {
 // ServerDescriptor describes [Server].
 var ServerDescriptor = figureout.MustDerive(
 	func(c *Server, s *figureout.Schema[Server]) {
-		// No env.Name here: the variable name is derived from the canonical
-		// path, so this field reads APP_SERVER_ADDRESS once Server is nested
-		// under "server". An explicit env.Name would be absolute and drop the
-		// "SERVER_" part.
 		figureout.Value(s, &c.Address, "address").
 			Doc("Listen address.").NonEmpty().ApplyDefault("127.0.0.1")
 
+		// env.Name replaces this field's own segment only, so nesting Server
+		// under "server" reads APP_SERVER_LISTEN_PORT.
 		figureout.Value(s, &c.Port, "port",
+			env.Name("LISTEN_PORT"),
 			json.Accepts(json.Integer(), json.String()),
 		).Doc("Listen port.").InRange(1, 65535).ApplyDefault(8080)
 

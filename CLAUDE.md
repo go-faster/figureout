@@ -34,8 +34,10 @@ golangci-lint fmt ./... && golangci-lint run ./...
   Completeness failures are the point, not an inconvenience.
 - Model types are suffixed (`FieldModel`, `ObjectModel`, `VariantModel`)
   because `Object` and `Variant` are registration functions.
-- A source name set with `Name` is absolute; derived names follow the
-  canonical path. Nesting a descriptor does not re-prefix an explicit name.
+- **Source names are relative to the declaring object.** `env.Name("LISTEN_PORT")`
+  inside a nested descriptor reads `SERVER_LISTEN_PORT`, so nesting composes and
+  the collision check sees the real variable. env derivation is pluggable via
+  `env.Names`.
 
 ## Conventions
 

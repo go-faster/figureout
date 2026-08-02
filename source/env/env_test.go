@@ -144,3 +144,18 @@ func FuzzParse(f *testing.F) {
 		require.Equal(t, typ.Go, reflect.TypeOf(v))
 	})
 }
+
+func TestDeriveKeepsExplicitCase(t *testing.T) {
+	for _, tt := range []struct {
+		path string
+		want string
+	}{
+		{"server.ADDRESS", "SERVER_ADDRESS"},
+		{"server.LISTEN_PORT", "SERVER_LISTEN_PORT"},
+		{"httpAPI.baseURL", "HTTP_API_BASE_URL"},
+		{"a1B", "A1_B"},
+		{"a1b", "A1B"},
+	} {
+		require.Equal(t, tt.want, derive(tt.path), tt.path)
+	}
+}

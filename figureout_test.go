@@ -13,11 +13,11 @@ import (
 func TestResolve(t *testing.T) {
 	cfg, report, err := configDescriptor.Resolve(
 		env.Values(map[string]string{
-			"APP_ADDRESS": "127.0.0.1",
-			"APP_PORT":    "8080",
-			"APP_TIMEOUT": "5s",
-			"APP_LEVEL":   "warn",
-			"APP_TAGS":    "a,b, c",
+			"APP_SERVER_ADDRESS": "127.0.0.1",
+			"APP_SERVER_PORT":    "8080",
+			"APP_TIMEOUT":        "5s",
+			"APP_LEVEL":          "warn",
+			"APP_TAGS":           "a,b, c",
 		}, env.Prefix("APP_")),
 	)
 	require.NoError(t, err)
@@ -34,14 +34,14 @@ func TestResolve(t *testing.T) {
 	origin, ok := report.OriginOf("server.port")
 	require.True(t, ok)
 	require.Equal(t, env.Source, origin.Source)
-	require.Equal(t, "APP_PORT", origin.Name)
+	require.Equal(t, "APP_SERVER_PORT", origin.Name)
 }
 
 func TestResolveDefaults(t *testing.T) {
 	cfg, report, err := configDescriptor.Resolve(
 		env.Values(map[string]string{
-			"ADDRESS": "localhost",
-			"PORT":    "80",
+			"SERVER_ADDRESS": "localhost",
+			"SERVER_PORT":    "80",
 		}),
 	)
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestResolveDefaults(t *testing.T) {
 
 func TestResolveMissingRequired(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(env.Values(map[string]string{
-		"ADDRESS": "localhost",
+		"SERVER_ADDRESS": "localhost",
 	}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "server.port")
@@ -66,8 +66,8 @@ func TestResolveMissingRequired(t *testing.T) {
 
 func TestResolveConstraintViolation(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(env.Values(map[string]string{
-		"ADDRESS": "localhost",
-		"PORT":    "70000",
+		"SERVER_ADDRESS": "localhost",
+		"SERVER_PORT":    "70000",
 	}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at most 65535")
@@ -76,9 +76,9 @@ func TestResolveConstraintViolation(t *testing.T) {
 
 func TestResolveEnumViolation(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(env.Values(map[string]string{
-		"ADDRESS": "localhost",
-		"PORT":    "80",
-		"LEVEL":   "verbose",
+		"SERVER_ADDRESS": "localhost",
+		"SERVER_PORT":    "80",
+		"LEVEL":          "verbose",
 	}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must be one of [debug, info, warn, error]")
@@ -376,9 +376,9 @@ const errEven constError = "must be even"
 
 func TestDescriptorValue(t *testing.T) {
 	cfg, _, err := configDescriptor.Resolve(env.Values(map[string]string{
-		"ADDRESS": "localhost",
-		"PORT":    "80",
-		"TIMEOUT": "3s",
+		"SERVER_ADDRESS": "localhost",
+		"SERVER_PORT":    "80",
+		"TIMEOUT":        "3s",
 	}))
 	require.NoError(t, err)
 
@@ -436,8 +436,8 @@ func TestTypedConstraints(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = d.Resolve(env.Values(map[string]string{
-		"TIMEOUT": "100ms",
-		"PORT":    "80",
+		"TIMEOUT":     "100ms",
+		"SERVER_PORT": "80",
 	}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 1s")

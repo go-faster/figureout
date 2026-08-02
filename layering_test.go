@@ -29,8 +29,8 @@ tags:
 	cfg, report, err := configDescriptor.Resolve(
 		yaml.File(file),
 		env.Values(map[string]string{
-			"APP_PORT":  "9090",
-			"APP_LEVEL": "error",
+			"APP_SERVER_PORT": "9090",
+			"APP_LEVEL":       "error",
 		}, env.Prefix("APP_")),
 	)
 	require.NoError(t, err)
@@ -49,7 +49,7 @@ tags:
 	port, ok := report.OriginOf("server.port")
 	require.True(t, ok)
 	require.Equal(t, env.Source, port.Source)
-	require.Equal(t, "APP_PORT", port.Name)
+	require.Equal(t, "APP_SERVER_PORT", port.Name)
 }
 
 // TestSameDocumentAcrossFormats pins that JSON and YAML agree on the semantic
@@ -80,15 +80,15 @@ tags: [a]
 func TestValidationRunsAfterMerge(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(
 		json.Bytes([]byte(`{"server": {"address": "localhost", "port": 80}, "level": "info"}`)),
-		env.Values(map[string]string{"PORT": "70000"}),
+		env.Values(map[string]string{"SERVER_PORT": "70000"}),
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at most 65535")
-	require.Contains(t, err.Error(), "env PORT", "the failing layer is named")
+	require.Contains(t, err.Error(), "env SERVER_PORT", "the failing layer is named")
 
 	_, _, err = configDescriptor.Resolve(
 		json.Bytes([]byte(`{"server": {"address": "localhost", "port": 70000}, "level": "info"}`)),
-		env.Values(map[string]string{"PORT": "80"}),
+		env.Values(map[string]string{"SERVER_PORT": "80"}),
 	)
 	require.NoError(t, err, "an overridden bad value never reaches validation")
 }

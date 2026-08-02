@@ -62,14 +62,32 @@ func run(path string) error {
 	fmt.Printf("level=%s tags=%v limits=%v\n", cfg.Level, cfg.Tags, cfg.Limits)
 
 	fmt.Println("\nprovenance:")
-	for _, f := range ConfigDescriptor.Model().Fields() {
-		origin, ok := report.OriginOf(f.Path)
+	for _, path := range configPaths() {
+		origin, ok := report.OriginOf(path)
 		if !ok {
 			continue
 		}
-		fmt.Printf("  %-20s %s\n", f.Path, origin)
+		fmt.Printf("  %-24s %s\n", path, origin)
 	}
 	return nil
+}
+
+// configPaths lists every path a source can set, in declaration order.
+//
+// A union's discriminator is not a Go field, so it is not in Fields(); ask the
+// model for its path explicitly.
+func configPaths() []string {
+	var out []string
+	for _, f := range ConfigDescriptor.Model().Fields() {
+		if path, ok := figureout.DiscriminatorPath(f); ok {
+			out = append(out, path)
+			continue
+		}
+		if f.Type.Object == nil {
+			out = append(out, f.Path)
+		}
+	}
+	return out
 }
 
 func printSchema() error {

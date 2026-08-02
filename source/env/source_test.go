@@ -1,6 +1,7 @@
 package env_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -127,4 +128,110 @@ func TestNullLiteral(t *testing.T) {
 	erased, ok := report.ErasedBy("level")
 	require.True(t, ok)
 	require.Equal(t, "LEVEL", erased.Name)
+}
+
+type Nested struct {
+	Port int
+}
+
+type Outer struct {
+	Server Nested
+	Port   int
+}
+
+// TestNestedNameIsRelative pins that a name given inside a nested descriptor
+// keeps its parent's segments. Were it absolute, the nested field would claim
+// the same variable as the top-level one.
+func TestNestedNameIsRelative(t *testing.T) {
+	inner := figureout.MustDerive(func(c *Nested, s *figureout.Schema[Nested]) {
+		figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT"))
+	})
+	d, err := figureout.Derive(func(c *Outer, s *figureout.Schema[Outer]) {
+		figureout.Object(s, &c.Server, "server", inner)
+		figureout.Value(s, &c.Port, "port")
+	})
+	require.NoError(t, err)
+
+	cfg, report, err := d.Resolve(env.Values(map[string]string{
+		"APP_SERVER_LISTEN_PORT": "9090",
+		"APP_PORT":               "80",
+	}, env.Prefix("APP_")))
+	require.NoError(t, err)
+
+	require.Equal(t, 9090, cfg.Server.Port)
+	require.Equal(t, 80, cfg.Port)
+
+	origin, ok := report.OriginOf("server.port")
+	require.True(t, ok)
+	require.Equal(t, "APP_SERVER_LISTEN_PORT", origin.Name)
+}
+
+// TestNestedNameCollision shows the check the relative naming makes possible:
+// two fields can only collide when they really resolve to one variable.
+func TestNestedNameCollision(t *testing.T) {
+	inner := figureout.MustDerive(func(c *Nested, s *figureout.Schema[Nested]) {
+		figureout.Value(s, &c.Port, "port", env.Name("PORT"))
+	})
+	d, err := figureout.Derive(func(c *Outer, s *figureout.Schema[Outer]) {
+		figureout.Object(s, &c.Server, "server", inner)
+		figureout.Value(s, &c.Port, "port")
+	})
+	require.NoError(t, err)
+
+	cfg, _, err := d.Resolve(env.Values(map[string]string{
+		"SERVER_PORT": "9090",
+		"PORT":        "80",
+	}))
+	require.NoError(t, err, "SERVER_PORT and PORT are distinct")
+	require.Equal(t, 9090, cfg.Server.Port)
+	require.Equal(t, 80, cfg.Port)
+}
+
+func TestCustomNaming(t *testing.T) {
+	inner := figureout.MustDerive(func(c *Nested, s *figureout.Schema[Nested]) {
+		figureout.Value(s, &c.Port, "port")
+	})
+	d, err := figureout.Derive(func(c *Outer, s *figureout.Schema[Outer]) {
+		figureout.Object(s, &c.Server, "server", inner)
+		figureout.Value(s, &c.Port, "port")
+	})
+	require.NoError(t, err)
+
+	// Double underscore between levels.
+	naming := func(_ *figureout.FieldModel, segments []string) []string {
+		return []string{strings.ToUpper(strings.Join(segments, "__"))}
+	}
+
+	cfg, report, err := d.Resolve(env.Values(map[string]string{
+		"SERVER__PORT": "9090",
+		"PORT":         "80",
+	}, env.Names(naming)))
+	require.NoError(t, err)
+	require.Equal(t, 9090, cfg.Server.Port)
+	require.Equal(t, 80, cfg.Port)
+
+	origin, ok := report.OriginOf("server.port")
+	require.True(t, ok)
+	require.Equal(t, "SERVER__PORT", origin.Name)
+}
+
+// TestCustomNamingCollision shows that a naming function is still checked: one
+// that flattens away a level makes two fields claim the same variable.
+func TestCustomNamingCollision(t *testing.T) {
+	inner := figureout.MustDerive(func(c *Nested, s *figureout.Schema[Nested]) {
+		figureout.Value(s, &c.Port, "port")
+	})
+	d, err := figureout.Derive(func(c *Outer, s *figureout.Schema[Outer]) {
+		figureout.Object(s, &c.Server, "server", inner)
+		figureout.Value(s, &c.Port, "port")
+	})
+	require.NoError(t, err)
+
+	flatten := func(_ *figureout.FieldModel, segments []string) []string {
+		return []string{strings.ToUpper(segments[len(segments)-1])}
+	}
+
+	_, _, err = d.Resolve(env.Values(map[string]string{"PORT": "80"}, env.Names(flatten)))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "environment variable PORT is assigned to both server.port and port")
 }
