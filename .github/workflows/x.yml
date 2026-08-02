@@ -8,13 +8,22 @@ on:
 
 # Common Go workflows from go faster
 # See https://github.com/go-faster/x
+#
+# go.mod requires go 1.26.5, so the default "oldstable" toolchain cannot build
+# the module; every job is pinned to stable.
 jobs:
   test:
     uses: go-faster/x/.github/workflows/test.yml@main
+    with:
+      go: stable
   cover:
     uses: go-faster/x/.github/workflows/cover.yml@main
+    with:
+      go: stable
   lint:
     uses: go-faster/x/.github/workflows/lint.yml@main
+    with:
+      go: stable
   commit:
     uses: go-faster/x/.github/workflows/commit.yml@main
   codeql:
