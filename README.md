@@ -10,8 +10,7 @@ declaration.
 go get github.com/go-faster/figureout
 ```
 
-This is a scaffold of the design in [`_ref/configuration-library-design.md`](_ref/configuration-library-design.md):
-the core, three sources (JSON, YAML, environment variables) and one target
+The core, three sources (JSON, YAML, environment variables) and one target
 (JSON Schema), wired end to end.
 
 ```go
@@ -269,60 +268,57 @@ and a library cannot ask its consumers to set `GOEXPERIMENT=jsonv2`.
 tags, and exposes anchors. `yaml.v4` was considered but is not yet available
 here.
 
-## Deviations from the design document
+## Design notes
 
-Six places where the document's API could not be written as spelled, or where
-a different shape was clearly better.
+Six decisions worth stating outright, because each rules out an approach that
+looks reasonable from the outside.
 
-**Presence selects the function; the type is inferred.** The document proposes
-per-semantic-type helpers (`Int`, `String`, `OptionalDuration`, …). A single
-generic `Carrier[T]` constraint that would collapse those pairs cannot be
-written — Go forbids a bare type parameter as a union term — so the split runs
-the other way: `Value`, `Optional` and `Nullable` infer the element type from
-the carrier, and there is exactly one registration function per presence rather
-than two per semantic type.
+**Presence selects the function; the type is inferred.** The obvious API is one
+helper per semantic type (`Int`, `String`, `Duration`), doubled for optionals.
+A single generic `Carrier[T]` constraint collapsing those pairs cannot be
+written: Go forbids a bare type parameter as a union term. So the split runs
+the other way — `Value` and `Optional` infer the element type from the
+carrier, one function per presence rather than two per semantic type.
 
-The trade is that a wrong semantic kind is a compilation diagnostic instead of
-a compile error, since `Value[T]` accepts any `T`; the document's §2.3 example
-`figureout.Int(s, &c.Host, "host")` no longer applies. In exchange, constraints
-are typed as the element — `AtLeast(time.Second)` on an `OptionalOf[Duration]`,
-not `AtLeast(any)`.
+The trade is that a wrong semantic kind is a compilation diagnostic rather than
+a compile error, since `Value[T]` accepts any `T`. In exchange, constraints are
+typed as the element: `AtLeast(time.Second)` on an `OptionalOf[Duration]`, not
+`AtLeast(any)`.
 
-**`FieldOption` is not generic.** `FieldOption[V]` would force every option call
+**`FieldOption` is not generic.** A `FieldOption[V]` would force every option call
 site to spell its type argument, because Go cannot infer a type argument for a
 nested call such as `env.Name("PORT")`. Options are untyped; value-typed
 operations (`ApplyDefault`, `Check`) live on the fluent builder or on generic
 top-level helpers where inference works from the argument, as in
 `figureout.Check("even", func(v int) error { … })`.
 
-**No nullable carrier.** The document models optionality and nullability as
-separate wrappers (§6.1, §6.2). Only `OptionalOf` survives: in a layered
-configuration an explicit null is far more useful as an erase directive than
-as a value, and once it is one, nothing nullable ever reaches the Go type.
+**No nullable carrier.** Optionality and nullability are orthogonal in a schema
+language, where an external spec forces the split. Configuration has no such
+spec, and layering gives null a better job: an explicit null is far more useful
+as an erase directive than as a value, and once it is one, nothing nullable
+ever reaches the Go type.
 
 **Model and carrier types are suffixed.** `Object` and `Variant` are
 registration functions, so the model types are `FieldModel`, `ObjectModel` and
-`VariantModel`, following the document's own `DescriptorModel`. For the same
+`VariantModel`. For the same
 reason the carriers are `OptionalOf[T]` and `NullableOf[T]`, leaving `Optional`
 and `Nullable` free as registration functions.
 
-**Merge policies are per field.** The document lists `MergeReplace`,
-`MergeAppend` and `MergeByKey` (§15.2) without fixing their scope. Append
-applies to lists and by-key to maps; a policy that does not fit the field's
-semantic kind is a compilation diagnostic. Objects are not deep-merged: their
-leaves merge individually, which is the same result without the surprise of a
-block that cannot be replaced wholesale.
+**Merge policies are per field.** Append applies to lists and by-key to maps; a
+policy that does not fit the field's semantic kind is a compilation
+diagnostic. Objects are not deep-merged: their leaves merge individually,
+which is the same result without the surprise of a block that cannot be
+replaced wholesale.
 
-**Registering descendants covers the parent.** The document leaves this open
-(§22.5). Registering `&c.Server.Port` without registering `c.Server` is
-accepted, and completeness then checks `Server`'s remaining fields
+**Registering descendants covers the parent.** Registering `&c.Server.Port`
+without registering `c.Server` is accepted, and completeness then checks `Server`'s remaining fields
 individually. Registering both a parent and its descendants is rejected as a
 duplicate.
 
 ## Not yet implemented
 
-The design's later phases: TOML and flag sources; CUE source and schema
-output; generated documentation; code generation; optimized unsafe accessors.
+TOML and flag sources; CUE source and schema output; generated documentation;
+code generation; optimized unsafe accessors.
 
 ## Development
 

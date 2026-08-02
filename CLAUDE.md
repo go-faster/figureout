@@ -1,7 +1,7 @@
 # figureout
 
 Descriptor-driven configuration library. One typed declaration derives
-decoding, validation, defaults and schemas. Design: `_ref/configuration-library-design.md`.
+decoding, validation, defaults and schemas.
 
 ## Commands
 

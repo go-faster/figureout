@@ -2,3 +2,6 @@
 *.test
 *.out
 /dist/
+
+# Local design reference, not part of the repository.
+/_ref/
