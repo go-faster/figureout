@@ -1,8 +1,14 @@
 # figureout
 
+[![go reference](https://pkg.go.dev/badge/github.com/go-faster/figureout.svg)](https://pkg.go.dev/github.com/go-faster/figureout)
+
 Descriptor-driven configuration for Go: declare the configuration once, derive
 decoding, validation, defaults, documentation and schemas from that one
 declaration.
+
+```console
+go get github.com/go-faster/figureout
+```
 
 This is a scaffold of the design in [`_ref/configuration-library-design.md`](_ref/configuration-library-design.md):
 the core, three sources (JSON, YAML, environment variables) and one target
@@ -31,6 +37,35 @@ cfg, report, err := ConfigDescriptor.Resolve(
 	env.Current(env.Prefix("APP_")),   // later sources win
 )
 schema, diags, err := jsonschema.Generate(ConfigDescriptor, jsonschema.Semantic())
+```
+
+## Examples
+
+Runnable documentation lives in [`example_test.go`](example_test.go) — layering,
+erasing, optional values, enums, unions, schema generation and completeness,
+each with verified output.
+
+[`examples/service`](examples/service) is a small program that puts them
+together:
+
+```console
+go run ./examples/service                        # resolve and print provenance
+APP_SERVER_PORT=9090 go run ./examples/service   # environment wins over the file
+APP_SERVER_TIMEOUT=null go run ./examples/service # erase a value from the file
+go run ./examples/service -schema                # JSON Schema for JSON input
+go run ./examples/service -paths                 # every path, type and default
+```
+
+```text
+listening on 0.0.0.0:9090
+request timeout 30s
+storage s3 bucket=service-data region=eu-central-1
+level=warn tags=[service production] limits=map[cpu:4 memory:8]
+
+provenance:
+  server.address       yaml server.address examples/service/config.yaml:8:3
+  server.port          env APP_SERVER_PORT
+  server.timeout       yaml server.timeout examples/service/config.yaml:10:3
 ```
 
 ## Packages
@@ -274,5 +309,10 @@ go test ./...
 go test ./source/env/ -run xxx -fuzz FuzzParse
 go test ./source/json/ -run xxx -fuzz FuzzParse
 go test ./schema/jsonschema/ -update   # refresh golden files
+go run ./examples/service              # end-to-end check
 golangci-lint fmt ./... && golangci-lint run ./...
 ```
+
+## License
+
+[MIT](LICENSE)

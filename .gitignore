@@ -1,0 +1,4 @@
+/figureout
+*.test
+*.out
+/dist/

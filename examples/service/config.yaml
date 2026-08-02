@@ -1,0 +1,25 @@
+# Base configuration. Every value here can be overridden by an APP_-prefixed
+# environment variable, and an explicit null erases one.
+#
+#   APP_SERVER_PORT=9090 go run ./examples/service
+#   APP_LEVEL=debug      go run ./examples/service
+
+server:
+  address: 0.0.0.0
+  port: 8080
+  timeout: 30s
+
+storage:
+  type: s3
+  bucket: service-data
+  region: eu-central-1
+
+level: warn
+
+tags:
+  - service
+  - production
+
+limits:
+  cpu: 4
+  memory: 8
