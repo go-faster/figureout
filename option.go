@@ -1,0 +1,220 @@
+package figureout
+
+import "github.com/go-faster/errors"
+
+// FieldOption customizes a field registration.
+//
+// Options are deliberately not generic over the field's value type: Go cannot
+// infer a type argument for a nested call such as env.Name("PORT"), so a
+// generic FieldOption[V] would force every option call site to spell the type.
+// Value-typed operations live on the returned fluent builder instead.
+type FieldOption interface {
+	ApplyFieldOption(FieldOptionContext) error
+}
+
+// FieldOptionFunc adapts a function to [FieldOption].
+type FieldOptionFunc func(FieldOptionContext) error
+
+// ApplyFieldOption implements [FieldOption].
+func (f FieldOptionFunc) ApplyFieldOption(c FieldOptionContext) error { return f(c) }
+
+// FieldOptionContext is the controlled surface an option may mutate.
+//
+// It exposes registration methods rather than internal state, so adapter
+// packages can extend the core without importing its internals.
+type FieldOptionContext interface {
+	// Name returns the canonical field name.
+	Name() string
+	// GoName returns the Go path of the field, for diagnostics.
+	GoName() string
+	// Type returns the semantic type of the field.
+	Type() Type
+	// Presence returns how the field models absence.
+	Presence() Presence
+
+	AddConstraint(Constraint) error
+	AddMetadata(Metadata) error
+	AddTargetAnnotation(TargetID, any) error
+
+	// SetSourceNames sets the primary name and aliases for a source.
+	SetSourceNames(SourceID, ...string) error
+	// AddSourceShapes declares the wire shapes a source accepts.
+	AddSourceShapes(SourceID, ...Shape) error
+	// SetSourceDecoder installs a decoder. A decoder without declared shapes
+	// is reported by schema generation.
+	SetSourceDecoder(SourceID, Decoder) error
+	// SkipSource excludes the field from a source.
+	SkipSource(SourceID) error
+	// AddSourceOption attaches source-specific settings.
+	AddSourceOption(SourceID, any) error
+}
+
+// fieldContext implements [FieldOptionContext] over a pending registration.
+type fieldContext struct {
+	reg *registration
+}
+
+func (c *fieldContext) Name() string       { return c.reg.name }
+func (c *fieldContext) GoName() string     { return c.reg.goName }
+func (c *fieldContext) Type() Type         { return c.reg.typ }
+func (c *fieldContext) Presence() Presence { return c.reg.acc.presence }
+
+func (c *fieldContext) AddConstraint(cs Constraint) error {
+	if cs == nil {
+		return errors.New("nil constraint")
+	}
+	c.reg.constraints = append(c.reg.constraints, cs)
+	return nil
+}
+
+func (c *fieldContext) AddMetadata(m Metadata) error {
+	if m.Doc != "" {
+		c.reg.meta.Doc = m.Doc
+	}
+	if m.Deprecated != "" {
+		c.reg.meta.Deprecated = m.Deprecated
+	}
+	if m.Hidden {
+		c.reg.meta.Hidden = true
+	}
+	c.reg.meta.Examples = append(c.reg.meta.Examples, m.Examples...)
+	return nil
+}
+
+func (c *fieldContext) AddTargetAnnotation(id TargetID, v any) error {
+	if id == "" {
+		return errors.New("empty target id")
+	}
+	if c.reg.targets == nil {
+		c.reg.targets = map[TargetID][]any{}
+	}
+	c.reg.targets[id] = append(c.reg.targets[id], v)
+	return nil
+}
+
+func (c *fieldContext) projection(id SourceID) (*SourceProjection, error) {
+	if id == "" {
+		return nil, errors.New("empty source id")
+	}
+	if c.reg.sources == nil {
+		c.reg.sources = map[SourceID]*SourceProjection{}
+	}
+	p, ok := c.reg.sources[id]
+	if !ok {
+		p = &SourceProjection{Source: id}
+		c.reg.sources[id] = p
+	}
+	return p, nil
+}
+
+func (c *fieldContext) SetSourceNames(id SourceID, names ...string) error {
+	p, err := c.projection(id)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return errors.New("no names given")
+	}
+	p.Names = append(p.Names, names...)
+	return nil
+}
+
+func (c *fieldContext) AddSourceShapes(id SourceID, shapes ...Shape) error {
+	p, err := c.projection(id)
+	if err != nil {
+		return err
+	}
+	p.Accepts = append(p.Accepts, shapes...)
+	return nil
+}
+
+func (c *fieldContext) SetSourceDecoder(id SourceID, d Decoder) error {
+	p, err := c.projection(id)
+	if err != nil {
+		return err
+	}
+	if p.Decoder != nil {
+		return errors.Errorf("source %q already has a decoder", id)
+	}
+	p.Decoder = d
+	return nil
+}
+
+func (c *fieldContext) SkipSource(id SourceID) error {
+	p, err := c.projection(id)
+	if err != nil {
+		return err
+	}
+	p.Skip = true
+	return nil
+}
+
+func (c *fieldContext) AddSourceOption(id SourceID, v any) error {
+	p, err := c.projection(id)
+	if err != nil {
+		return err
+	}
+	p.Options = append(p.Options, v)
+	return nil
+}
+
+// AcceptShapes declares the wire shapes a source accepts for a field.
+//
+// Source packages normally wrap this in their own option, such as
+// json.Accepts. Declaring shapes is what lets schema generation describe a
+// custom decoder that would otherwise be opaque.
+func AcceptShapes(id SourceID, shapes ...Shape) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		if len(shapes) == 0 {
+			return errors.New("no shapes given")
+		}
+		return c.AddSourceShapes(id, shapes...)
+	})
+}
+
+// WithDecoder installs a source decoder together with the shapes it accepts.
+//
+// A decoder is opaque, so the shapes are mandatory: without them, schema
+// generation cannot describe what the source will accept.
+func WithDecoder(id SourceID, d Decoder, shapes ...Shape) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		if d == nil {
+			return errors.New("nil decoder")
+		}
+		if len(shapes) == 0 {
+			return errors.Errorf("decoder for source %q declares no accepted shapes", id)
+		}
+		if err := c.SetSourceDecoder(id, d); err != nil {
+			return err
+		}
+		return c.AddSourceShapes(id, shapes...)
+	})
+}
+
+// Doc attaches documentation to a field.
+func Doc(text string) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		return c.AddMetadata(Metadata{Doc: text})
+	})
+}
+
+// Deprecated marks a field as deprecated with a reason.
+func Deprecated(reason string) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		return c.AddMetadata(Metadata{Deprecated: reason})
+	})
+}
+
+// Hidden hides a field from generated documentation and help text.
+func Hidden() FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		return c.AddMetadata(Metadata{Hidden: true})
+	})
+}
+
+// Examples attaches example values to a field.
+func Examples(values ...any) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		return c.AddMetadata(Metadata{Examples: values})
+	})
+}
