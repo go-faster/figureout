@@ -5,8 +5,10 @@ import "fmt"
 // OptionalOf represents a value that is either missing or present.
 //
 // Unlike a pointer, it carries no aliasing and distinguishes "not provided by
-// any source" from "provided as the zero value". Use [NullableOf] when a source
-// may also provide an explicit null.
+// any source" from "provided as the zero value".
+//
+// There is no nullable counterpart: an explicit null in a source erases what
+// earlier layers set rather than becoming a value the field holds.
 type OptionalOf[T any] struct {
 	value T
 	set   bool

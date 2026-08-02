@@ -95,11 +95,21 @@ type Report struct {
 	Diagnostics Diagnostics
 
 	origins map[string]Origin
+	erased  map[string]Origin
 }
 
 // OriginOf returns where the value at the canonical path came from.
 func (r *Report) OriginOf(path string) (Origin, bool) {
 	o, ok := r.origins[path]
+	return o, ok
+}
+
+// ErasedBy returns the layer that erased the value at the canonical path.
+//
+// A source spells an erase as an explicit null; the field then falls back to
+// its default, or stays missing.
+func (r *Report) ErasedBy(path string) (Origin, bool) {
+	o, ok := r.erased[path]
 	return o, ok
 }
 
@@ -134,9 +144,9 @@ func (d *Descriptor[T]) Resolve(sources ...Source) (T, *Report, error) {
 // ResolveContext is [Descriptor.Resolve] with a context.
 func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (T, *Report, error) {
 	var cfg T
-	rep := &Report{origins: map[string]Origin{}}
+	rep := &Report{origins: map[string]Origin{}, erased: map[string]Origin{}}
 
-	merged := map[string]Assignment{}
+	state := map[string]*merged{}
 	for _, src := range sources {
 		if src == nil {
 			continue
@@ -149,24 +159,66 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 			continue
 		}
 		rep.Diagnostics = append(rep.Diagnostics, layer.Diagnostics...)
-		for _, a := range layer.Assignments {
-			if a.State == ValueMissing {
-				continue
-			}
-			merged[a.Path] = a
-		}
+		d.model.fold(state, layer, rep)
 	}
 	if err := rep.Diagnostics.Err(); err != nil {
 		return cfg, rep, err
 	}
 
+	values := make(map[string]Assignment, len(state))
+	for path, st := range state {
+		if st.erased != nil {
+			rep.erased[path] = *st.erased
+		}
+		if st.set {
+			values[path] = st.assignment
+		}
+	}
+
 	rv := reflect.ValueOf(&cfg).Elem()
-	d.model.materialize(d.model.Root, rv, merged, rep)
+	d.model.materialize(d.model.Root, rv, values, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		var zero T
 		return zero, rep, err
 	}
 	return cfg, rep, nil
+}
+
+// fold merges one layer into the accumulated state, honouring each field's
+// merge policy.
+func (m *Model) fold(state map[string]*merged, layer *Layer, rep *Report) {
+	for _, a := range layer.Assignments {
+		if a.State == ValueMissing {
+			continue
+		}
+
+		policy := MergeReplace
+		var f *FieldModel
+		if found, ok := m.FieldByPath(a.Path); ok {
+			f, policy = found, found.Merge
+		}
+
+		st, ok := state[a.Path]
+		if !ok {
+			st = &merged{}
+			state[a.Path] = st
+		}
+		if err := mergeSet(st, a, policy); err != nil {
+			origin := a.Origin
+			path, goPath := a.Path, ""
+			if f != nil {
+				goPath = f.GoName
+			}
+			rep.Diagnostics = append(rep.Diagnostics, Diagnostic{
+				Severity:  SeverityError,
+				Code:      CodeConstraintMismatch,
+				Message:   err.Error(),
+				FieldPath: path,
+				GoPath:    goPath,
+				Origin:    &origin,
+			})
+		}
+	}
 }
 
 // Value reads the value at a canonical path out of a resolved configuration.
@@ -280,14 +332,6 @@ func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[strin
 	a, ok := values[f.Path]
 	if !ok || a.State == ValueMissing {
 		m.applyDefault(f, v, rep)
-		return
-	}
-
-	if a.State == ValueNull {
-		if err := f.acc.setNull(v); err != nil {
-			rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
-		}
-		rep.origins[f.Path] = a.Origin
 		return
 	}
 

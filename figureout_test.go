@@ -327,12 +327,12 @@ func TestTypeRegistry(t *testing.T) {
 func TestOptionalCarrier(t *testing.T) {
 	type Cfg struct {
 		Name  figureout.OptionalOf[string]
-		Count figureout.NullableOf[int]
+		Count figureout.OptionalOf[int]
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
 		figureout.Optional(s, &c.Name, "name")
-		figureout.Nullable(s, &c.Count, "count")
+		figureout.Optional(s, &c.Count, "count")
 	})
 	require.NoError(t, err)
 
@@ -342,7 +342,7 @@ func TestOptionalCarrier(t *testing.T) {
 	name, ok := cfg.Name.Value()
 	require.True(t, ok, "an explicitly provided zero value is present")
 	require.Empty(t, name)
-	require.True(t, cfg.Count.IsMissing())
+	require.False(t, cfg.Count.IsSet())
 }
 
 func TestCheckIsRuntimeOnly(t *testing.T) {
@@ -418,7 +418,7 @@ func TestValueRejectsCarrier(t *testing.T) {
 		figureout.Value(s, &c.Name, "name")
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "register it with Optional or Nullable")
+	require.Contains(t, err.Error(), "register it with Optional")
 }
 
 // TestTypedConstraints pins the element type used by the fluent builder: a

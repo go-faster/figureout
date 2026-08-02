@@ -67,6 +67,8 @@ type FieldModel struct {
 	Meta        Metadata
 	Default     *Default
 	Constraints []Constraint
+	// Merge decides how the field combines values from several layers.
+	Merge MergePolicy
 
 	Sources map[SourceID]*SourceProjection
 	Targets map[TargetID][]any
@@ -186,17 +188,6 @@ func (a accessor) set(obj reflect.Value, v any) error {
 		return errors.Errorf("cannot assign %s to %s", rv.Type(), fv.Type())
 	}
 	return nil
-}
-
-func (a accessor) setNull(obj reflect.Value) error {
-	fv, err := a.field(obj)
-	if err != nil {
-		return err
-	}
-	if a.presence == PresenceRequired {
-		return errors.Errorf("%s does not accept null", fv.Type())
-	}
-	return fv.Addr().Interface().(carrierRef).carrierSetNull()
 }
 
 func (a accessor) get(obj reflect.Value) (any, bool) {

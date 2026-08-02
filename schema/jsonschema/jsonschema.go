@@ -171,6 +171,12 @@ func applied(f *figureout.FieldModel) bool {
 	return f.Default != nil && f.Default.Applied
 }
 
+// erasable reports whether an explicit null leaves the field resolvable: it
+// must be optional, or have a default to fall back to.
+func erasable(f *figureout.FieldModel) bool {
+	return f.Presence != figureout.PresenceRequired || applied(f)
+}
+
 func (g *generator) field(f *figureout.FieldModel) map[string]any {
 	var doc map[string]any
 	switch {
@@ -261,7 +267,11 @@ func (g *generator) types(f *figureout.FieldModel) []string {
 	if len(out) == 0 {
 		out = []string{jsonType(f.Type.Kind)}
 	}
-	if f.Presence == figureout.PresenceNullable {
+	// Null is a merge directive rather than a value: a source spells it to
+	// erase what earlier layers set. It therefore belongs in a schema that
+	// describes what a source accepts, never in the semantic schema, and only
+	// where erasing leaves the field with something to fall back on.
+	if g.source != "" && erasable(f) {
 		out = appendUnique(out, "null")
 	}
 	return out

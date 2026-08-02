@@ -101,3 +101,30 @@ func TestParseErrorCarriesOrigin(t *testing.T) {
 	require.Contains(t, err.Error(), `invalid integer "eighty"`)
 	require.Contains(t, err.Error(), "env LISTEN_PORT")
 }
+
+// TestNullLiteral covers the opt-in erase spelling: environment variables have
+// no null, so a field must declare the text that means one.
+func TestNullLiteral(t *testing.T) {
+	type Cfg struct {
+		Level   string
+		Comment string
+	}
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Value(s, &c.Level, "level", env.NullLiteral("null")).ApplyDefault("info")
+		figureout.Value(s, &c.Comment, "comment").ApplyDefault("")
+	})
+	require.NoError(t, err)
+
+	cfg, report, err := d.Resolve(
+		env.Values(map[string]string{"LEVEL": "debug", "COMMENT": "kept"}),
+		env.Values(map[string]string{"LEVEL": "null", "COMMENT": "null"}),
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, "info", cfg.Level, "erased, so the default applies")
+	require.Equal(t, "null", cfg.Comment, "undeclared, so it stays an ordinary string")
+
+	erased, ok := report.ErasedBy("level")
+	require.True(t, ok)
+	require.Equal(t, "LEVEL", erased.Name)
+}

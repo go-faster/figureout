@@ -15,26 +15,24 @@ const (
 	// missing value is an error unless a default applies.
 	PresenceRequired Presence = iota
 	// PresenceOptional is an [OptionalOf] carrier: missing or present.
+	//
+	// There is deliberately no third state. An explicit null in a source is a
+	// merge directive that erases earlier layers, not a value a field holds,
+	// so nullability never reaches the Go type.
 	PresenceOptional
-	// PresenceNullable is a [NullableOf] carrier: missing, null or present.
-	PresenceNullable
 )
 
 // String implements [fmt.Stringer].
 func (p Presence) String() string {
-	switch p {
-	case PresenceOptional:
+	if p == PresenceOptional {
 		return "optional"
-	case PresenceNullable:
-		return "nullable"
-	default:
-		return "required"
 	}
+	return "required"
 }
 
-// carrierInfo is implemented by [OptionalOf] and [NullableOf]. It is unexported on
-// purpose: presence is a closed set, and third-party carriers would break the
-// resolution pipeline's missing/null/present model.
+// carrierInfo is implemented by [OptionalOf]. It is unexported on purpose:
+// presence is a closed set, and a third-party carrier would break the
+// resolution pipeline's missing and present model.
 type carrierInfo interface {
 	carrierPresence() Presence
 	carrierElem() reflect.Type
@@ -44,14 +42,11 @@ type carrierInfo interface {
 // decoded value into a carrier without knowing its element type statically.
 type carrierRef interface {
 	carrierSet(v any) error
-	carrierSetNull() error
 	carrierGet() (any, bool)
 }
 
 func (OptionalOf[T]) carrierPresence() Presence { return PresenceOptional }
 func (OptionalOf[T]) carrierElem() reflect.Type { return reflect.TypeFor[T]() }
-func (NullableOf[T]) carrierPresence() Presence { return PresenceNullable }
-func (NullableOf[T]) carrierElem() reflect.Type { return reflect.TypeFor[T]() }
 
 func (o *OptionalOf[T]) carrierSet(v any) error {
 	t, ok := v.(T)
@@ -62,31 +57,8 @@ func (o *OptionalOf[T]) carrierSet(v any) error {
 	return nil
 }
 
-func (o *OptionalOf[T]) carrierSetNull() error {
-	return errors.Errorf("OptionalOf[%s] does not accept null", reflect.TypeFor[T]())
-}
-
 func (o *OptionalOf[T]) carrierGet() (any, bool) {
 	v, ok := o.Value()
-	return v, ok
-}
-
-func (n *NullableOf[T]) carrierSet(v any) error {
-	t, ok := v.(T)
-	if !ok {
-		return errors.Errorf("cannot assign %T to NullableOf[%s]", v, reflect.TypeFor[T]())
-	}
-	n.Set(t)
-	return nil
-}
-
-func (n *NullableOf[T]) carrierSetNull() error {
-	n.SetNull()
-	return nil
-}
-
-func (n *NullableOf[T]) carrierGet() (any, bool) {
-	v, ok := n.Value()
 	return v, ok
 }
 

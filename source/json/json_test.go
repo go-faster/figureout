@@ -20,7 +20,6 @@ type Server struct {
 type Config struct {
 	Server  Server
 	Timeout figureout.OptionalOf[time.Duration]
-	Grace   figureout.NullableOf[time.Duration]
 	Tags    []string
 	Limits  map[string]int
 }
@@ -34,7 +33,6 @@ var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[
 var configDescriptor = figureout.MustDerive(func(c *Config, s *figureout.Schema[Config]) {
 	figureout.Object(s, &c.Server, "server", serverDescriptor)
 	figureout.Optional(s, &c.Timeout, "timeout")
-	figureout.Nullable(s, &c.Grace, "grace")
 	figureout.Value(s, &c.Tags, "tags").ApplyDefault([]string{})
 	figureout.Value(s, &c.Limits, "limits").ApplyDefault(map[string]int{})
 })
@@ -45,7 +43,6 @@ const document = `{
     "port": 8080
   },
   "timeout": "5s",
-  "grace": null,
   "tags": ["a", "b"],
   "limits": {"cpu": 2, "mem": 8}
 }`
@@ -62,8 +59,6 @@ func TestLoad(t *testing.T) {
 	timeout, ok := cfg.Timeout.Value()
 	require.True(t, ok)
 	require.Equal(t, 5*time.Second, timeout)
-
-	require.True(t, cfg.Grace.IsNull(), "JSON null reaches a Nullable field")
 
 	origin, ok := report.OriginOf("server.port")
 	require.True(t, ok)
@@ -129,12 +124,14 @@ func TestUndeclaredStringIsRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "declare json.Accepts(json.String())")
 }
 
-func TestNullIntoRequiredField(t *testing.T) {
+// TestNullErasesARequiredField shows the cost of null meaning erase: a
+// required field with nothing to fall back on becomes missing.
+func TestNullErasesARequiredField(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(json.Bytes([]byte(`{
   "server": {"address": null, "port": 80}
 }`)))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not accept null")
+	require.Contains(t, err.Error(), "no value provided and no default")
 }
 
 func TestNamesAndAliases(t *testing.T) {

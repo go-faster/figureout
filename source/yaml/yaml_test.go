@@ -20,7 +20,6 @@ type Server struct {
 type Config struct {
 	Server  Server
 	Timeout figureout.OptionalOf[time.Duration]
-	Grace   figureout.NullableOf[time.Duration]
 	Tags    []string
 	Ratio   float64
 }
@@ -33,7 +32,6 @@ var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[
 var configDescriptor = figureout.MustDerive(func(c *Config, s *figureout.Schema[Config]) {
 	figureout.Object(s, &c.Server, "server", serverDescriptor)
 	figureout.Optional(s, &c.Timeout, "timeout")
-	figureout.Nullable(s, &c.Grace, "grace")
 	figureout.Value(s, &c.Tags, "tags").ApplyDefault([]string{})
 	figureout.Value(s, &c.Ratio, "ratio").ApplyDefault(0.0)
 })
@@ -42,7 +40,6 @@ const document = `server:
   address: 127.0.0.1
   port: 8080
 timeout: 5s
-grace: ~
 tags:
   - a
   - b
@@ -61,7 +58,6 @@ func TestLoad(t *testing.T) {
 	timeout, ok := cfg.Timeout.Value()
 	require.True(t, ok)
 	require.Equal(t, 5*time.Second, timeout)
-	require.True(t, cfg.Grace.IsNull(), "~ reaches a Nullable field")
 
 	origin, ok := report.OriginOf("server.port")
 	require.True(t, ok)

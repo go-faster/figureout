@@ -92,6 +92,7 @@ type registration struct {
 
 	meta        Metadata
 	def         *Default
+	merge       MergePolicy
 	constraints []Constraint
 	sources     map[SourceID]*SourceProjection
 	targets     map[TargetID][]any
@@ -288,6 +289,7 @@ func (b *builder) compile() (*Model, Diagnostics) {
 			Presence:    reg.acc.presence,
 			Meta:        reg.meta,
 			Default:     reg.def,
+			Merge:       reg.merge,
 			Constraints: reg.constraints,
 			Sources:     reg.sources,
 			Targets:     reg.targets,
@@ -340,6 +342,10 @@ func (b *builder) validateField(f *FieldModel, diags *Diagnostics) {
 			diags.errorf(CodeDefaultMismatch, f.GoName, f.Name,
 				"default of type %s is not assignable to %s", dt, f.Type.Go)
 		}
+	}
+	if !f.Merge.Applies(f.Type.Kind) {
+		diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
+			"merge policy %q does not apply to a %s field", f.Merge, f.Type.Kind)
 	}
 	if !f.acc.settable {
 		diags.errorf(CodeMissingDefinition, f.GoName, f.Name,

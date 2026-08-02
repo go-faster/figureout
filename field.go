@@ -183,6 +183,24 @@ func (f *ValueField[T]) LessThan(maximum T) *ValueField[T] {
 	return f.with(RangeConstraint{Maximum: maximum, ExclusiveMaximum: true})
 }
 
+// MergeReplace takes the value from the last layer that provided one. It is
+// the default.
+func (f *ValueField[T]) MergeReplace() *ValueField[T] { return f.mergeWith(MergeReplace) }
+
+// MergeAppend concatenates list values across layers, in layer order.
+func (f *ValueField[T]) MergeAppend() *ValueField[T] { return f.mergeWith(MergeAppend) }
+
+// MergeByKey merges map entries across layers, so a later layer changes only
+// the keys it names.
+func (f *ValueField[T]) MergeByKey() *ValueField[T] { return f.mergeWith(MergeByKey) }
+
+func (f *ValueField[T]) mergeWith(p MergePolicy) *ValueField[T] {
+	if f.ok() {
+		f.reg.merge = p
+	}
+	return f
+}
+
 // NonEmpty requires a length of at least one.
 func (f *ValueField[T]) NonEmpty() *ValueField[T] {
 	return f.MinLength(1)

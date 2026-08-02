@@ -95,6 +95,13 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 			continue
 		}
 
+		if literal, ok := nullLiteralOf(e.field); ok && raw == literal {
+			// An erase directive, not a value: it drops what earlier layers
+			// set, so the field falls back to its default or to missing.
+			layer.SetNull(e.path, origin)
+			continue
+		}
+
 		v, err := parse(e.field.Type, raw, separatorOf(e.field))
 		if err != nil {
 			layer.Diagnostics = append(layer.Diagnostics, figureout.Diagnostic{
@@ -256,6 +263,39 @@ func Separator(sep string) figureout.FieldOption {
 }
 
 type separatorOption struct{ sep string }
+
+// NullLiteral declares the value that erases a field.
+//
+// Environment variables have no null, only text, so the literal is opt-in per
+// field: without it, "null" is just a string and stays one.
+//
+//	figureout.Optional(s, &c.Timeout, "timeout", env.NullLiteral("null"))
+//
+//	APP_TIMEOUT=null   erases whatever an earlier layer set
+func NullLiteral(literal string) figureout.FieldOption {
+	return figureout.FieldOptionFunc(func(c figureout.FieldOptionContext) error {
+		if literal == "" {
+			return errors.New("empty null literal")
+		}
+		return c.AddSourceOption(Source, nullLiteralOption{literal})
+	})
+}
+
+type nullLiteralOption struct{ literal string }
+
+// nullLiteralOf returns the erase literal declared for a field, if any.
+func nullLiteralOf(f *figureout.FieldModel) (string, bool) {
+	p, ok := f.Source(Source)
+	if !ok {
+		return "", false
+	}
+	for _, o := range p.Options {
+		if n, ok := o.(nullLiteralOption); ok {
+			return n.literal, true
+		}
+	}
+	return "", false
+}
 
 // separatorOf returns the list separator declared for a field, if any.
 func separatorOf(f *figureout.FieldModel) string {

@@ -72,7 +72,7 @@ The differences are the point:
 | | JSON | YAML | env |
 | --- | --- | --- | --- |
 | `8080` vs `"8080"` | distinct; a string needs `json.Accepts(json.String())` | distinct by tag: `!!int` vs `!!str` | everything is text |
-| null | `null` | `null`, `~`, or empty | not representable |
+| null (erases) | `null` | `null` or `~` | opt-in `env.NullLiteral` |
 | positions | line and column | line and column | variable name |
 | anchors | — | resolved before binding | — |
 
@@ -89,20 +89,68 @@ the carrier:
 type Config struct {
 	Port    int
 	Timeout figureout.OptionalOf[time.Duration]   // missing | present
-	Grace   figureout.NullableOf[time.Duration]   // missing | null | present
 }
 
-figureout.Value(s, &c.Port, "port").InRange(1, 65535)          // T = int
-figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second) // T = time.Duration
-figureout.Nullable(s, &c.Grace, "grace")
+figureout.Value(s, &c.Port, "port").InRange(1, 65535)              // T = int
+figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)  // T = time.Duration
 ```
 
-The types carry the `Of` suffix so the plain names stay free for the
-functions. `Value` rejects a carrier field with a diagnostic naming the
+The type carries the `Of` suffix so the plain name stays free for the
+function. `Value` rejects a carrier field with a diagnostic naming the
 function to use instead, so the two cannot be mixed up silently.
 
 A plain field is required: a missing value is an error unless the field has an
 applied default. Optionality lives in the Go type, never in a pointer.
+
+There is **no nullable carrier**. Optional and nullable are orthogonal in a
+schema language, where an external spec forces the split, but configuration
+has no such spec — and layering gives null a more useful job. See
+[Merging](#merging).
+
+## Merging
+
+Sources decode into layers; layers merge in order; validation runs once, on
+the merged value. Each field decides how its layers combine:
+
+```go
+figureout.Value(s, &c.Args,   "args")               // replace, the default
+figureout.Value(s, &c.Tags,   "tags").MergeAppend() // lists accumulate
+figureout.Value(s, &c.Limits, "limits").MergeByKey()// maps merge per entry
+```
+
+```yaml
+# base.yaml            # override.yaml        # result
+tags: [a, b]           tags: [c]              tags: [a, b, c]
+limits: {cpu: 1, mem: 8}  limits: {mem: 16}   limits: {cpu: 1, mem: 16}
+args: [x]              args: [y]              args: [y]
+```
+
+**An explicit null erases.** A null in a later layer drops what earlier layers
+set, so the field falls back to its default, or to missing:
+
+```yaml
+# base.yaml       # override.yaml     # result
+timeout: 30s      timeout: null       timeout is missing again
+level: debug      level: null         level falls back to its default
+```
+
+That is why there is no nullable carrier: null never reaches the Go value, so
+no consumer of a resolved config has to handle a third state. `report.ErasedBy(path)`
+names the layer that erased a value, just as `OriginOf` names the one that set
+it. A required field with no default that gets erased is an error, which is
+the intended cost.
+
+Environment variables have no null, so the spelling is opt-in per field:
+
+```go
+figureout.Optional(s, &c.Timeout, "timeout", env.NullLiteral("null"))
+// APP_TIMEOUT=null erases; without the declaration, "null" is just text
+```
+
+Because null is a directive rather than a value, it appears in a schema only
+when that schema describes what a source accepts, and only where erasing
+leaves something to fall back on — `jsonschema.ForSource(...)` emits it,
+`jsonschema.Semantic()` never does.
 
 ## Enum and OneOf
 
@@ -166,7 +214,7 @@ here.
 
 ## Deviations from the design document
 
-Four places where the document's API could not be written as spelled, or where
+Six places where the document's API could not be written as spelled, or where
 a different shape was clearly better.
 
 **Presence selects the function; the type is inferred.** The document proposes
@@ -190,11 +238,23 @@ operations (`ApplyDefault`, `Check`) live on the fluent builder or on generic
 top-level helpers where inference works from the argument, as in
 `figureout.Check("even", func(v int) error { … })`.
 
+**No nullable carrier.** The document models optionality and nullability as
+separate wrappers (§6.1, §6.2). Only `OptionalOf` survives: in a layered
+configuration an explicit null is far more useful as an erase directive than
+as a value, and once it is one, nothing nullable ever reaches the Go type.
+
 **Model and carrier types are suffixed.** `Object` and `Variant` are
 registration functions, so the model types are `FieldModel`, `ObjectModel` and
 `VariantModel`, following the document's own `DescriptorModel`. For the same
 reason the carriers are `OptionalOf[T]` and `NullableOf[T]`, leaving `Optional`
 and `Nullable` free as registration functions.
+
+**Merge policies are per field.** The document lists `MergeReplace`,
+`MergeAppend` and `MergeByKey` (§15.2) without fixing their scope. Append
+applies to lists and by-key to maps; a policy that does not fit the field's
+semantic kind is a compilation diagnostic. Objects are not deep-merged: their
+leaves merge individually, which is the same result without the surprise of a
+block that cannot be replaced wholesale.
 
 **Registering descendants covers the parent.** The document leaves this open
 (§22.5). Registering `&c.Server.Port` without registering `c.Server` is
@@ -205,8 +265,7 @@ duplicate.
 ## Not yet implemented
 
 The design's later phases: TOML and flag sources; CUE source and schema
-output; generated documentation; collection merge policies; code generation;
-optimized unsafe accessors.
+output; generated documentation; code generation; optimized unsafe accessors.
 
 ## Development
 

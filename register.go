@@ -24,13 +24,13 @@ func registerValue[R, T any](
 // The semantic type is derived from T, so named types such as
 // "type Port uint16" are integers with whatever the type registry adds. A
 // missing value is an error unless the field has an applied default; use
-// [Optional] or [Nullable] for a field a source may leave out.
+// [Optional] for a field a source may leave out.
 func Value[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
 	b := s.b
 	f := registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[T](), name, opts)
 	if f.ok() && f.reg.acc.presence != PresenceRequired {
 		b.diags.errorf(CodeUnsupportedType, f.reg.goName, name,
-			"%s carries %s presence; register it with Optional or Nullable",
+			"%s carries %s presence; register it with Optional",
 			f.reg.goName, f.reg.acc.presence)
 	}
 	return f
@@ -42,14 +42,6 @@ func Value[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *
 // constraints are typed as T rather than as OptionalOf[T].
 func Optional[R, T any](s *Schema[R], field *OptionalOf[T], name string, opts ...FieldOption) *ValueField[T] {
 	return registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[OptionalOf[T]](), name, opts)
-}
-
-// Nullable registers a field that a source may leave out or set to null.
-//
-// Only sources that model null, such as JSON and YAML, can produce the null
-// state.
-func Nullable[R, T any](s *Schema[R], field *NullableOf[T], name string, opts ...FieldOption) *ValueField[T] {
-	return registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[NullableOf[T]](), name, opts)
 }
 
 // Object registers a nested configuration object described by its own

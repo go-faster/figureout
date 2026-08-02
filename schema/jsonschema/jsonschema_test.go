@@ -39,7 +39,6 @@ type Server struct {
 type Config struct {
 	Server  Server
 	Timeout figureout.OptionalOf[time.Duration]
-	Grace   figureout.NullableOf[time.Duration]
 	Level   LogLevel
 	Tags    []string
 	Secret  []byte
@@ -60,7 +59,6 @@ var configDescriptor = figureout.MustDerive(func(c *Config, s *figureout.Schema[
 	figureout.Object(s, &c.Server, "server", serverDescriptor).
 		Doc("HTTP server settings.")
 	figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)
-	figureout.Nullable(s, &c.Grace, "grace")
 	figureout.Enum(s, &c.Level, "level").ApplyDefault(LogInfo)
 	figureout.Value(s, &c.Tags, "tags").MinItems(1).MaxItems(8).ApplyDefault([]string{})
 	figureout.Value(s, &c.Secret, "secret").MaxLength(64).ApplyDefault([]byte(nil))
@@ -165,7 +163,8 @@ func TestGenerateUnion(t *testing.T) {
 // source accepts every value as a string, while the semantic schema does not.
 func TestGenerateForSource(t *testing.T) {
 	type Cfg struct {
-		Port int
+		Port    int
+		Timeout figureout.OptionalOf[time.Duration]
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
@@ -175,6 +174,11 @@ func TestGenerateForSource(t *testing.T) {
 				figureout.Shape{Kind: figureout.ShapeInteger},
 				figureout.Shape{Kind: figureout.ShapeString},
 			),
+		)
+		// Optional, so an explicit null can erase it; the source schema says
+		// so and the semantic schema does not.
+		figureout.Optional(s, &c.Timeout, "timeout",
+			figureout.AcceptShapes(env.Source, figureout.Shape{Kind: figureout.ShapeString}),
 		)
 	})
 	require.NoError(t, err)

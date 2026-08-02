@@ -52,8 +52,8 @@ func (k TypeKind) String() string {
 type Type struct {
 	Kind TypeKind
 
-	// Go is the Go type carrying the value, with [OptionalOf] and [NullableOf]
-	// already unwrapped.
+	// Go is the Go type carrying the value, with [OptionalOf] already
+	// unwrapped.
 	Go reflect.Type
 
 	Elem   *Type        // list element, map value
