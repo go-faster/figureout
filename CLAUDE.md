@@ -6,12 +6,17 @@ decoding, validation, defaults and schemas.
 ## Commands
 
 ```console
-go test ./...
-go test ./schema/jsonschema/ -update            # refresh golden files
-go test ./source/json/ -run xxx -fuzz FuzzParse # also ./source/env/
-go run ./examples/service                       # end-to-end UX check
-golangci-lint fmt ./... && golangci-lint run ./...
+make test      # go test, then go test -race
+make coverage  # profile.out plus a per-function summary
+make golden    # refresh golden files
+make fuzz      # JSON and text scalar parsers
+make example   # end-to-end UX check
+make lint fmt  # golangci-lint
 ```
+
+CI is `go-faster/x` reusable workflows in `.github/workflows/x.yml`
+(test, cover, lint, commit, codeql). `cover.yml` calls `make coverage`, so
+that target must keep producing `profile.out`.
 
 ## Layout
 

@@ -62,7 +62,7 @@ func (o *OptionalOf[T]) carrierGet() (any, bool) {
 	return v, ok
 }
 
-// unwrapCarrier reports the presence modelled by t and the Go type of the
+// unwrapCarrier reports the presence modeled by t and the Go type of the
 // value it carries. A type that is not a carrier is required and carries itself.
 func unwrapCarrier(t reflect.Type) (Presence, reflect.Type) {
 	if c, ok := reflect.New(t).Elem().Interface().(carrierInfo); ok {

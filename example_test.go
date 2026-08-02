@@ -121,14 +121,14 @@ func Example_optional() {
 	// {"timeout": "1m"}    -> some(1m0s)
 }
 
-type levelled struct {
+type leveled struct {
 	Level LogLevel
 }
 
 // An enum takes its values from the type, so a stringer derivative stays the
 // single source of truth.
 func Example_enum() {
-	descriptor := figureout.MustDerive(func(c *levelled, s *figureout.Schema[levelled]) {
+	descriptor := figureout.MustDerive(func(c *leveled, s *figureout.Schema[leveled]) {
 		figureout.Enum(s, &c.Level, "level").ApplyDefault(LogInfo)
 	})
 

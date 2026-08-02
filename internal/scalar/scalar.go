@@ -20,7 +20,7 @@ import (
 const DefaultSeparator = ","
 
 // ParseText converts raw text into a semantic value of the field's Go type.
-func ParseText(t figureout.Type, raw string, sep string) (any, error) {
+func ParseText(t figureout.Type, raw, sep string) (any, error) {
 	if sep == "" {
 		sep = DefaultSeparator
 	}
@@ -92,7 +92,7 @@ func parseInteger(want reflect.Type, raw string) (any, error) {
 	}
 }
 
-func parseList(t figureout.Type, raw string, sep string) (any, error) {
+func parseList(t figureout.Type, raw, sep string) (any, error) {
 	if t.Elem == nil {
 		return nil, errors.New("list without element type")
 	}

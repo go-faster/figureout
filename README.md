@@ -1,6 +1,4 @@
-# figureout
-
-[![go reference](https://pkg.go.dev/badge/github.com/go-faster/figureout.svg)](https://pkg.go.dev/github.com/go-faster/figureout)
+# figureout [![](https://img.shields.io/badge/go-pkg-00ADD8)](https://pkg.go.dev/github.com/go-faster/figureout#section-documentation) [![](https://img.shields.io/codecov/c/github/go-faster/figureout?label=cover)](https://codecov.io/gh/go-faster/figureout) [![alpha](https://img.shields.io/badge/-alpha-orange)](https://go-faster.org/docs/projects/status#alpha)
 
 Descriptor-driven configuration for Go: declare the configuration once, derive
 decoding, validation, defaults, documentation and schemas from that one
@@ -323,12 +321,13 @@ code generation; optimized unsafe accessors.
 ## Development
 
 ```console
-go test ./...
-go test ./source/env/ -run xxx -fuzz FuzzParse
-go test ./source/json/ -run xxx -fuzz FuzzParse
-go test ./schema/jsonschema/ -update   # refresh golden files
-go run ./examples/service              # end-to-end check
-golangci-lint fmt ./... && golangci-lint run ./...
+make test        # go test, then go test -race
+make test_fast   # go test ./...
+make coverage    # profile.out plus a per-function summary
+make fuzz        # the JSON and text scalar parsers
+make golden      # refresh golden files
+make example     # run examples/service end to end
+make lint fmt    # golangci-lint
 ```
 
 ## License

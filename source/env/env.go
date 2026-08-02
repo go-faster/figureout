@@ -123,9 +123,10 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 	return layer, nil
 }
 
-func (s *source) lookup(names []string) (string, string, bool) {
+// lookup returns the first variable that is set, with its name and value.
+func (s *source) lookup(names []string) (name, value string, ok bool) {
 	for _, n := range names {
-		if v, ok := s.vars[n]; ok {
+		if v, set := s.vars[n]; set {
 			return n, v, true
 		}
 	}

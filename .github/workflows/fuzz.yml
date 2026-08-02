@@ -1,0 +1,28 @@
+name: fuzz
+
+# The JSON and text scalar parsers are the only hand-written parsing in the
+# module, so they get a short fuzz run on every push to main.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./source/json/ -run xxx -fuzz FuzzParse -fuzztime 2m
+      - run: go test ./source/env/ -run xxx -fuzz FuzzParse -fuzztime 2m

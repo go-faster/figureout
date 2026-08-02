@@ -94,7 +94,7 @@ func TestConstraintErrorPointsAtTheValue(t *testing.T) {
 	require.Contains(t, err.Error(), "json server.port")
 }
 
-// TestAcceptsString pins the declaration-driven behaviour: a numeric field
+// TestAcceptsString pins the declaration-driven behavior: a numeric field
 // takes a JSON string only because it said it would.
 func TestAcceptsString(t *testing.T) {
 	cfg, _, err := configDescriptor.Resolve(json.Bytes([]byte(`{

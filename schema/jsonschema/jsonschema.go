@@ -17,6 +17,13 @@ const Target = figureout.TargetID("jsonschema")
 // Dialect is the emitted JSON Schema dialect.
 const Dialect = "https://json-schema.org/draft/2020-12/schema"
 
+// JSON Schema keywords used often enough to name.
+const (
+	keyType       = "type"
+	keyProperties = "properties"
+	keyRequired   = "required"
+)
+
 // Diagnostic codes reported by generation.
 const (
 	// CodeNotRepresentable reports a semantic rule that JSON Schema cannot
@@ -157,12 +164,12 @@ func (g *generator) object(o *figureout.ObjectModel) map[string]any {
 	}
 
 	doc := map[string]any{
-		"type":                 "object",
-		"properties":           props,
+		keyType:                "object",
+		keyProperties:          props,
 		"additionalProperties": false,
 	}
 	if len(required) > 0 {
-		doc["required"] = required
+		doc[keyRequired] = required
 	}
 	return doc
 }
@@ -209,13 +216,13 @@ func (g *generator) union(f *figureout.FieldModel) map[string]any {
 	variants := make([]any, 0, len(u.Variants))
 	for _, v := range u.Variants {
 		schema := g.object(v.Object)
-		props, _ := schema["properties"].(map[string]any)
+		props, _ := schema[keyProperties].(map[string]any)
 		props[u.Discriminator] = map[string]any{
 			"type":  "string",
 			"const": v.Tag,
 		}
-		required, _ := schema["required"].([]string)
-		schema["required"] = append([]string{u.Discriminator}, required...)
+		required, _ := schema[keyRequired].([]string)
+		schema[keyRequired] = append([]string{u.Discriminator}, required...)
 		variants = append(variants, schema)
 	}
 	return map[string]any{
@@ -231,9 +238,9 @@ func (g *generator) scalar(f *figureout.FieldModel) map[string]any {
 	types := g.types(f)
 	switch {
 	case len(types) == 1:
-		doc["type"] = types[0]
+		doc[keyType] = types[0]
 	case len(types) > 1:
-		doc["type"] = types
+		doc[keyType] = types
 	}
 
 	if format := formatOf(f.Type.Kind); format != "" {
@@ -287,7 +294,7 @@ func appendUnique(dst []string, v string) []string {
 }
 
 func (g *generator) typeSchema(t figureout.Type) map[string]any {
-	doc := map[string]any{"type": jsonType(t.Kind)}
+	doc := map[string]any{keyType: jsonType(t.Kind)}
 	if format := formatOf(t.Kind); format != "" {
 		doc["format"] = format
 	}
@@ -414,7 +421,7 @@ func (g *generator) applyPatches(f *figureout.FieldModel, doc map[string]any) {
 			if !p.structural {
 				continue
 			}
-			doc["type"] = p.Type
+			doc[keyType] = p.Type
 			g.diags = append(g.diags, figureout.Diagnostic{
 				Severity:  figureout.SeverityInfo,
 				Code:      CodeOverride,

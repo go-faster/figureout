@@ -184,7 +184,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 	return cfg, rep, nil
 }
 
-// fold merges one layer into the accumulated state, honouring each field's
+// fold merges one layer into the accumulated state, honoring each field's
 // merge policy.
 func (m *Model) fold(state map[string]*merged, layer *Layer, rep *Report) {
 	for _, a := range layer.Assignments {

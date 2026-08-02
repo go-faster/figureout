@@ -70,7 +70,10 @@ type source struct {
 func File(path string, opts ...Option) figureout.Source {
 	return newSource(&source{
 		file: path,
-		read: func() ([]byte, error) { return os.ReadFile(path) },
+		read: func() ([]byte, error) {
+			// The path is the configuration file the caller named.
+			return os.ReadFile(path) //nolint:gosec // G304: caller-supplied path is the point
+		},
 	}, opts)
 }
 
@@ -134,7 +137,8 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 		File:            s.file,
 		Decoder:         decoder{},
 		DisallowUnknown: s.disallowUnknown,
-		// YAML spells null as ~, null or an empty value.
+		// YAML spells null as ~ or null, so a document can erase what an
+		// earlier layer set.
 		AllowNull: true,
 	}.Bind(m, root), nil
 }
