@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "debug": {
+      "default": false,
+      "type": "boolean"
+    },
+    "grace": {
+      "format": "duration",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "level": {
+      "default": "info",
+      "enum": [
+        "debug",
+        "info"
+      ],
+      "type": "string"
+    },
+    "ratio": {
+      "default": 0.5,
+      "exclusiveMaximum": 1,
+      "exclusiveMinimum": 0,
+      "type": "number"
+    },
+    "secret": {
+      "contentEncoding": "base64",
+      "default": null,
+      "maxLength": 64,
+      "type": "string"
+    },
+    "server": {
+      "additionalProperties": false,
+      "description": "HTTP server settings.",
+      "properties": {
+        "address": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9.]+$",
+          "type": "string"
+        },
+        "port": {
+          "examples": [
+            8080
+          ],
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "address",
+        "port"
+      ],
+      "type": "object"
+    },
+    "tags": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array"
+    },
+    "timeout": {
+      "format": "duration",
+      "type": "string"
+    },
+    "workers": {
+      "default": 4,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "server"
+  ],
+  "title": "Config",
+  "type": "object"
+}

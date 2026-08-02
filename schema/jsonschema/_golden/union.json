@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "backend": {
+      "discriminator": {
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "bucket": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "s3",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "bucket"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "local",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "required": [
+    "backend"
+  ],
+  "type": "object"
+}
