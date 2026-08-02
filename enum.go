@@ -26,14 +26,11 @@ type EnumSliceValuer[T any] interface {
 	Values() []T
 }
 
-// EnumField is a fluent builder for enumerated fields.
-type EnumField struct{ *FieldBuilder }
-
 // Enum registers a field whose type enumerates its own values.
 //
 // An enum is a set of allowed values for one type. It is distinct from [OneOf],
 // which selects between alternative shapes.
-func Enum[R any, T EnumValuer[T]](s *Schema[R], field *T, name string, opts ...FieldOption) *EnumField {
+func Enum[R any, T EnumValuer[T]](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
 	var zero T
 	return registerEnum(s, unsafe.Pointer(field), reflect.TypeFor[T](), name,
 		slices.Collect(zero.AllValues()), opts)
@@ -41,7 +38,7 @@ func Enum[R any, T EnumValuer[T]](s *Schema[R], field *T, name string, opts ...F
 
 // EnumSlice registers a field whose type enumerates its own values through a
 // Values method.
-func EnumSlice[R any, T EnumSliceValuer[T]](s *Schema[R], field *T, name string, opts ...FieldOption) *EnumField {
+func EnumSlice[R any, T EnumSliceValuer[T]](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
 	var zero T
 	return registerEnum(s, unsafe.Pointer(field), reflect.TypeFor[T](), name, zero.Values(), opts)
 }
@@ -50,7 +47,7 @@ func EnumSlice[R any, T EnumSliceValuer[T]](s *Schema[R], field *T, name string,
 //
 // Generators that emit a package-level function rather than a method, such as
 // enumer's LogLevelValues, are registered this way.
-func EnumFunc[R, T any](s *Schema[R], field *T, name string, values func() []T, opts ...FieldOption) *EnumField {
+func EnumFunc[R, T any](s *Schema[R], field *T, name string, values func() []T, opts ...FieldOption) *ValueField[T] {
 	var vs []T
 	if values != nil {
 		vs = values()
@@ -59,7 +56,7 @@ func EnumFunc[R, T any](s *Schema[R], field *T, name string, values func() []T, 
 }
 
 // EnumValues registers an enumerated field with an explicit set of values.
-func EnumValues[R, T any](s *Schema[R], field *T, name string, values []T, opts ...FieldOption) *EnumField {
+func EnumValues[R, T any](s *Schema[R], field *T, name string, values []T, opts ...FieldOption) *ValueField[T] {
 	return registerEnum(s, unsafe.Pointer(field), reflect.TypeFor[T](), name, values, opts)
 }
 
@@ -70,7 +67,7 @@ func registerEnum[R, T any](
 	name string,
 	values []T,
 	opts []FieldOption,
-) *EnumField {
+) *ValueField[T] {
 	b := s.b
 	reg := b.register(ptr, carrier, name, regField)
 	if reg.goName != "" {
@@ -81,12 +78,12 @@ func registerEnum[R, T any](
 		}
 	}
 	b.applyOptions(reg, opts)
-	return &EnumField{&FieldBuilder{b: b, reg: reg}}
+	return &ValueField[T]{&FieldBuilder{b: b, reg: reg}}
 }
 
 // EnumOf builds an enum constraint option for a type that enumerates its own
 // values. Use it with [Field] for carriers the enum helpers do not spell, such
-// as Optional[LogLevel].
+// as OptionalOf[LogLevel].
 func EnumOf[T EnumValuer[T]]() FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
 		var zero T

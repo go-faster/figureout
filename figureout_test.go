@@ -126,7 +126,7 @@ func TestDeriveErrors(t *testing.T) {
 		{
 			name: "missing definition",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
-				figureout.Int(s, &c.A, "a")
+				figureout.Value(s, &c.A, "a")
 			},
 			wantCode: figureout.CodeMissingDefinition,
 			wantMsg:  "Cfg.B is neither registered nor explicitly ignored",
@@ -134,9 +134,9 @@ func TestDeriveErrors(t *testing.T) {
 		{
 			name: "nested incompleteness",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
-				figureout.Int(s, &c.A, "a")
-				figureout.String(s, &c.B, "b")
-				figureout.String(s, &c.N.Kept, "kept")
+				figureout.Value(s, &c.A, "a")
+				figureout.Value(s, &c.B, "b")
+				figureout.Value(s, &c.N.Kept, "kept")
 			},
 			wantCode: figureout.CodeMissingDefinition,
 			wantMsg:  "Cfg.N.Dropped is neither registered nor explicitly ignored",
@@ -144,9 +144,9 @@ func TestDeriveErrors(t *testing.T) {
 		{
 			name: "duplicate registration",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
-				figureout.Int(s, &c.A, "a")
-				figureout.Int(s, &c.A, "also_a")
-				figureout.String(s, &c.B, "b")
+				figureout.Value(s, &c.A, "a")
+				figureout.Value(s, &c.A, "also_a")
+				figureout.Value(s, &c.B, "b")
 				figureout.IgnoreRecursive(s, &c.N)
 			},
 			wantCode: figureout.CodeDuplicateField,
@@ -155,8 +155,8 @@ func TestDeriveErrors(t *testing.T) {
 		{
 			name: "duplicate name",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
-				figureout.Int(s, &c.A, "value")
-				figureout.String(s, &c.B, "value")
+				figureout.Value(s, &c.A, "value")
+				figureout.Value(s, &c.B, "value")
 				figureout.IgnoreRecursive(s, &c.N)
 			},
 			wantCode: figureout.CodeDuplicateName,
@@ -166,7 +166,7 @@ func TestDeriveErrors(t *testing.T) {
 			name: "foreign pointer",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
 				var other int
-				figureout.Int(s, &other, "a")
+				figureout.Value(s, &other, "a")
 			},
 			wantCode: figureout.CodeForeignPointer,
 			wantMsg:  "does not refer to a field inside figureout_test.Cfg",
@@ -175,7 +175,7 @@ func TestDeriveErrors(t *testing.T) {
 			name: "pointer to copy",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
 				a := c.A
-				figureout.Int(s, &a, "a")
+				figureout.Value(s, &a, "a")
 			},
 			wantCode: figureout.CodeForeignPointer,
 		},
@@ -183,7 +183,7 @@ func TestDeriveErrors(t *testing.T) {
 			name: "helper type mismatch is caught by binding",
 			describe: func(c *Cfg, s *figureout.Schema[Cfg]) {
 				// A is an int, so no string field lives at its offset.
-				figureout.String(s, (*string)(nil), "a")
+				figureout.Value(s, (*string)(nil), "a")
 			},
 			wantCode: figureout.CodeForeignPointer,
 		},
@@ -215,7 +215,7 @@ func TestIgnore(t *testing.T) {
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.Name, "name")
+		figureout.Value(s, &c.Name, "name")
 		figureout.IgnoreRecursive(s, &c.Runtime, figureout.Reason("runtime-only state"))
 		figureout.IgnorePath[Cfg](s, "Marker")
 	})
@@ -249,13 +249,13 @@ func TestCompletenessStrict(t *testing.T) {
 	}
 
 	_, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.Name, "name")
+		figureout.Value(s, &c.Name, "name")
 	}, figureout.Completeness(figureout.CompletenessStrict))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Cfg.hidden")
 
 	_, err = figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.Name, "name")
+		figureout.Value(s, &c.Name, "name")
 		figureout.Ignore(s, &c.hidden)
 	}, figureout.Completeness(figureout.CompletenessStrict))
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestCompletenessDisabled(t *testing.T) {
 	}
 
 	_, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.Name, "name")
+		figureout.Value(s, &c.Name, "name")
 	}, figureout.Completeness(figureout.CompletenessDisabled))
 	require.NoError(t, err)
 }
@@ -280,7 +280,7 @@ func TestCompletenessTagged(t *testing.T) {
 	}
 
 	_, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.Name, "name")
+		figureout.Value(s, &c.Name, "name")
 	}, figureout.Completeness(figureout.CompletenessTagged))
 	require.NoError(t, err, "untagged fields do not participate")
 }
@@ -291,7 +291,7 @@ func TestUnexportedFieldCannotBeRegistered(t *testing.T) {
 	}
 
 	_, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.secret, "secret")
+		figureout.Value(s, &c.secret, "secret")
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unexported")
@@ -311,8 +311,8 @@ func TestTypeRegistry(t *testing.T) {
 	))
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Int(s, &c.Listen, "listen")
-		figureout.Int(s, &c.Admin, "admin")
+		figureout.Value(s, &c.Listen, "listen")
+		figureout.Value(s, &c.Admin, "admin")
 	}, figureout.WithTypeRegistry(types))
 	require.NoError(t, err)
 
@@ -326,13 +326,13 @@ func TestTypeRegistry(t *testing.T) {
 
 func TestOptionalCarrier(t *testing.T) {
 	type Cfg struct {
-		Name  figureout.Optional[string]
-		Count figureout.Nullable[int]
+		Name  figureout.OptionalOf[string]
+		Count figureout.NullableOf[int]
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.String(s, &c.Name, "name")
-		figureout.Int(s, &c.Count, "count")
+		figureout.Optional(s, &c.Name, "name")
+		figureout.Nullable(s, &c.Count, "count")
 	})
 	require.NoError(t, err)
 
@@ -351,7 +351,7 @@ func TestCheckIsRuntimeOnly(t *testing.T) {
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Int(s, &c.Workers, "workers", figureout.Check("must-be-even", func(v int) error {
+		figureout.Value(s, &c.Workers, "workers", figureout.Check("must-be-even", func(v int) error {
 			if v%2 != 0 {
 				return errEven
 			}
@@ -407,4 +407,38 @@ func TestDescriptorValueUnion(t *testing.T) {
 
 	_, ok = storeDescriptor.Value(&cfg, "backend.path")
 	require.False(t, ok, "paths inside an unselected variant are absent")
+}
+
+func TestValueRejectsCarrier(t *testing.T) {
+	type Cfg struct {
+		Name figureout.OptionalOf[string]
+	}
+
+	_, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Value(s, &c.Name, "name")
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "register it with Optional or Nullable")
+}
+
+// TestTypedConstraints pins the element type used by the fluent builder: a
+// carrier field is constrained as T, not as its carrier.
+func TestTypedConstraints(t *testing.T) {
+	type Cfg struct {
+		Timeout figureout.OptionalOf[time.Duration]
+		Port    int
+	}
+
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)
+		figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+	})
+	require.NoError(t, err)
+
+	_, _, err = d.Resolve(env.Values(map[string]string{
+		"TIMEOUT": "100ms",
+		"PORT":    "80",
+	}))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at least 1s")
 }

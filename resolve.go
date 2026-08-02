@@ -172,7 +172,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 // Value reads the value at a canonical path out of a resolved configuration.
 //
 // It reports false when the path is unknown, when the value is carried by an
-// unset [Optional], or when the path is inside a variant that was not selected.
+// unset [OptionalOf], or when the path is inside a variant that was not selected.
 func (d *Descriptor[T]) Value(cfg *T, path string) (any, bool) {
 	if cfg == nil {
 		return nil, false

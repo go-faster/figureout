@@ -64,11 +64,11 @@ func TestEnumProviders(t *testing.T) {
 // do not spell.
 func TestEnumOnCarrier(t *testing.T) {
 	type Cfg struct {
-		Level figureout.Optional[LogLevel]
+		Level figureout.OptionalOf[LogLevel]
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Field(s, &c.Level, "level", figureout.EnumOf[LogLevel]())
+		figureout.Optional(s, &c.Level, "level", figureout.EnumOf[LogLevel]())
 	})
 	require.NoError(t, err)
 

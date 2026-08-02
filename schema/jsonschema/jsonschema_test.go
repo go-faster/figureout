@@ -38,8 +38,8 @@ type Server struct {
 
 type Config struct {
 	Server  Server
-	Timeout figureout.Optional[time.Duration]
-	Grace   figureout.Nullable[time.Duration]
+	Timeout figureout.OptionalOf[time.Duration]
+	Grace   figureout.NullableOf[time.Duration]
 	Level   LogLevel
 	Tags    []string
 	Secret  []byte
@@ -49,8 +49,8 @@ type Config struct {
 }
 
 var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[Server]) {
-	figureout.String(s, &c.Address, "address").NonEmpty().Pattern(`^[a-z0-9.]+$`)
-	figureout.Int(s, &c.Port, "port",
+	figureout.Value(s, &c.Address, "address").NonEmpty().Pattern(`^[a-z0-9.]+$`)
+	figureout.Value(s, &c.Port, "port",
 		env.Name("PORT"),
 		jsonschema.Decorate(jsonschema.Patch{Examples: []any{8080}}),
 	).InRange(1, 65535)
@@ -59,14 +59,14 @@ var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[
 var configDescriptor = figureout.MustDerive(func(c *Config, s *figureout.Schema[Config]) {
 	figureout.Object(s, &c.Server, "server", serverDescriptor).
 		Doc("HTTP server settings.")
-	figureout.Duration(s, &c.Timeout, "timeout").AtLeast(time.Second)
-	figureout.Duration(s, &c.Grace, "grace")
+	figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)
+	figureout.Nullable(s, &c.Grace, "grace")
 	figureout.Enum(s, &c.Level, "level").ApplyDefault(LogInfo)
-	figureout.List(s, &c.Tags, "tags").MinItems(1).MaxItems(8).ApplyDefault([]string{})
-	figureout.Bytes(s, &c.Secret, "secret").MaxLength(64).ApplyDefault([]byte(nil))
-	figureout.Float(s, &c.Ratio, "ratio").GreaterThan(0.0).LessThan(1.0).ApplyDefault(0.5)
-	figureout.Bool(s, &c.Debug, "debug").ApplyDefault(false)
-	figureout.Int(s, &c.Workers, "workers",
+	figureout.Value(s, &c.Tags, "tags").MinItems(1).MaxItems(8).ApplyDefault([]string{})
+	figureout.Value(s, &c.Secret, "secret").MaxLength(64).ApplyDefault([]byte(nil))
+	figureout.Value(s, &c.Ratio, "ratio").GreaterThan(0.0).LessThan(1.0).ApplyDefault(0.5)
+	figureout.Value(s, &c.Debug, "debug").ApplyDefault(false)
+	figureout.Value(s, &c.Workers, "workers",
 		figureout.Check("must-be-even", func(v int) error { return nil }),
 	).ApplyDefault(4)
 })
@@ -103,7 +103,7 @@ func TestDecorateRejectsStructuralChange(t *testing.T) {
 	}
 
 	_, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Int(s, &c.Port, "port", jsonschema.Decorate(jsonschema.Patch{
+		figureout.Value(s, &c.Port, "port", jsonschema.Decorate(jsonschema.Patch{
 			Type: []string{"integer", "string"},
 		}))
 	})
@@ -117,7 +117,7 @@ func TestOverrideEmitsDiagnostic(t *testing.T) {
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Int(s, &c.Port, "port", jsonschema.Override(jsonschema.Patch{
+		figureout.Value(s, &c.Port, "port", jsonschema.Override(jsonschema.Patch{
 			Type: []string{"integer", "string"},
 		}))
 	})
@@ -146,11 +146,11 @@ var storeDescriptor = figureout.MustDerive(func(c *StoreConfig, s *figureout.Sch
 		figureout.Discriminator("type"),
 		figureout.Variant("s3", &c.Backend.S3,
 			figureout.MustDerive(func(b *S3Backend, s *figureout.Schema[S3Backend]) {
-				figureout.String(s, &b.Bucket, "bucket").NonEmpty()
+				figureout.Value(s, &b.Bucket, "bucket").NonEmpty()
 			})),
 		figureout.Variant("local", &c.Backend.Local,
 			figureout.MustDerive(func(b *LocalBackend, s *figureout.Schema[LocalBackend]) {
-				figureout.String(s, &b.Path, "path").NonEmpty()
+				figureout.Value(s, &b.Path, "path").NonEmpty()
 			})),
 	)
 })
@@ -169,7 +169,7 @@ func TestGenerateForSource(t *testing.T) {
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Int(s, &c.Port, "port",
+		figureout.Value(s, &c.Port, "port",
 			env.Name("PORT"),
 			figureout.AcceptShapes(env.Source,
 				figureout.Shape{Kind: figureout.ShapeInteger},

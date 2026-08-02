@@ -8,9 +8,6 @@ import (
 	"github.com/go-faster/errors"
 )
 
-// UnionField is a fluent builder for union fields.
-type UnionField struct{ *FieldBuilder }
-
 // UnionOption declares part of a union.
 type UnionOption interface {
 	applyUnion(*unionBuilder) error

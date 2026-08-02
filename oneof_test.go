@@ -28,10 +28,10 @@ type StoreConfig struct {
 
 var (
 	s3Descriptor = figureout.MustDerive(func(c *S3Backend, s *figureout.Schema[S3Backend]) {
-		figureout.String(s, &c.Bucket, "bucket").NonEmpty()
+		figureout.Value(s, &c.Bucket, "bucket").NonEmpty()
 	})
 	localDescriptor = figureout.MustDerive(func(c *LocalBackend, s *figureout.Schema[LocalBackend]) {
-		figureout.String(s, &c.Path, "path").NonEmpty()
+		figureout.Value(s, &c.Path, "path").NonEmpty()
 	})
 	storeDescriptor = figureout.MustDerive(func(c *StoreConfig, s *figureout.Schema[StoreConfig]) {
 		figureout.OneOf(s, &c.Backend, "backend",

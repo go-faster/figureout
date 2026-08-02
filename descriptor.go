@@ -20,7 +20,7 @@ type Metadata struct {
 // Default is a field default.
 //
 // Applied defaults change the resolved value; documented defaults only
-// contribute metadata. The distinction matters for [Optional], where applying
+// contribute metadata. The distinction matters for [OptionalOf], where applying
 // a default turns a missing value into a present one.
 type Default struct {
 	Value   any
@@ -145,7 +145,7 @@ func (d *Descriptor[T]) Model() *Model { return d.model }
 
 // accessor reads and writes one Go field relative to its declaring object.
 //
-// Carrier fields such as [Optional] are written through the carrier interface,
+// Carrier fields such as [OptionalOf] are written through the carrier interface,
 // so presence is preserved rather than collapsed into a zero value.
 type accessor struct {
 	index    []int

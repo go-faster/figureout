@@ -6,8 +6,9 @@
 //
 //	var ConfigDescriptor = figureout.MustDerive(
 //		func(c *Config, s *figureout.Schema[Config]) {
-//			figureout.String(s, &c.Host, "host").NonEmpty()
-//			figureout.Int(s, &c.Port, "port").InRange(1, 65535)
+//			figureout.Value(s, &c.Host, "host").NonEmpty()
+//			figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+//			figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)
 //		},
 //	)
 //

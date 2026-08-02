@@ -2,7 +2,6 @@ package figureout
 
 import (
 	"reflect"
-	"time"
 
 	"github.com/go-faster/errors"
 )
@@ -15,9 +14,9 @@ const (
 	// PresenceRequired is a plain Go value: it is always materialized, and a
 	// missing value is an error unless a default applies.
 	PresenceRequired Presence = iota
-	// PresenceOptional is an [Optional] carrier: missing or present.
+	// PresenceOptional is an [OptionalOf] carrier: missing or present.
 	PresenceOptional
-	// PresenceNullable is a [Nullable] carrier: missing, null or present.
+	// PresenceNullable is a [NullableOf] carrier: missing, null or present.
 	PresenceNullable
 )
 
@@ -33,7 +32,7 @@ func (p Presence) String() string {
 	}
 }
 
-// carrierInfo is implemented by [Optional] and [Nullable]. It is unexported on
+// carrierInfo is implemented by [OptionalOf] and [NullableOf]. It is unexported on
 // purpose: presence is a closed set, and third-party carriers would break the
 // resolution pipeline's missing/null/present model.
 type carrierInfo interface {
@@ -49,44 +48,44 @@ type carrierRef interface {
 	carrierGet() (any, bool)
 }
 
-func (Optional[T]) carrierPresence() Presence { return PresenceOptional }
-func (Optional[T]) carrierElem() reflect.Type { return reflect.TypeFor[T]() }
-func (Nullable[T]) carrierPresence() Presence { return PresenceNullable }
-func (Nullable[T]) carrierElem() reflect.Type { return reflect.TypeFor[T]() }
+func (OptionalOf[T]) carrierPresence() Presence { return PresenceOptional }
+func (OptionalOf[T]) carrierElem() reflect.Type { return reflect.TypeFor[T]() }
+func (NullableOf[T]) carrierPresence() Presence { return PresenceNullable }
+func (NullableOf[T]) carrierElem() reflect.Type { return reflect.TypeFor[T]() }
 
-func (o *Optional[T]) carrierSet(v any) error {
+func (o *OptionalOf[T]) carrierSet(v any) error {
 	t, ok := v.(T)
 	if !ok {
-		return errors.Errorf("cannot assign %T to Optional[%s]", v, reflect.TypeFor[T]())
+		return errors.Errorf("cannot assign %T to OptionalOf[%s]", v, reflect.TypeFor[T]())
 	}
 	o.Set(t)
 	return nil
 }
 
-func (o *Optional[T]) carrierSetNull() error {
-	return errors.Errorf("Optional[%s] does not accept null", reflect.TypeFor[T]())
+func (o *OptionalOf[T]) carrierSetNull() error {
+	return errors.Errorf("OptionalOf[%s] does not accept null", reflect.TypeFor[T]())
 }
 
-func (o *Optional[T]) carrierGet() (any, bool) {
+func (o *OptionalOf[T]) carrierGet() (any, bool) {
 	v, ok := o.Value()
 	return v, ok
 }
 
-func (n *Nullable[T]) carrierSet(v any) error {
+func (n *NullableOf[T]) carrierSet(v any) error {
 	t, ok := v.(T)
 	if !ok {
-		return errors.Errorf("cannot assign %T to Nullable[%s]", v, reflect.TypeFor[T]())
+		return errors.Errorf("cannot assign %T to NullableOf[%s]", v, reflect.TypeFor[T]())
 	}
 	n.Set(t)
 	return nil
 }
 
-func (n *Nullable[T]) carrierSetNull() error {
+func (n *NullableOf[T]) carrierSetNull() error {
 	n.SetNull()
 	return nil
 }
 
-func (n *Nullable[T]) carrierGet() (any, bool) {
+func (n *NullableOf[T]) carrierGet() (any, bool) {
 	v, ok := n.Value()
 	return v, ok
 }
@@ -99,46 +98,3 @@ func unwrapCarrier(t reflect.Type) (Presence, reflect.Type) {
 	}
 	return PresenceRequired, t
 }
-
-// Carrier constraints.
-//
-// Go forbids a bare type parameter as a union term, so a single generic
-// Carrier[T] covering both T and Optional[T] cannot be spelled. Each semantic
-// helper therefore names a concrete carrier constraint, which keeps one helper
-// per semantic type with full type inference at the call site.
-//
-// Carriers of named types beyond these, such as Optional[Port], are registered
-// through [Field], which resolves the carrier by reflection.
-type (
-	// BoolCarrier carries a boolean.
-	BoolCarrier interface {
-		~bool | Optional[bool] | Nullable[bool]
-	}
-	// StringCarrier carries a string.
-	StringCarrier interface {
-		~string | Optional[string] | Nullable[string]
-	}
-	// IntCarrier carries an integer.
-	IntCarrier interface {
-		~int | ~int8 | ~int16 | ~int32 | ~int64 |
-			~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
-			Optional[int] | Nullable[int] |
-			Optional[int64] | Nullable[int64]
-	}
-	// FloatCarrier carries a floating point number.
-	FloatCarrier interface {
-		~float32 | ~float64 | Optional[float64] | Nullable[float64]
-	}
-	// DurationCarrier carries a [time.Duration].
-	DurationCarrier interface {
-		time.Duration | Optional[time.Duration] | Nullable[time.Duration]
-	}
-	// TimeCarrier carries a [time.Time].
-	TimeCarrier interface {
-		time.Time | Optional[time.Time] | Nullable[time.Time]
-	}
-	// BytesCarrier carries a byte slice.
-	BytesCarrier interface {
-		~[]byte | Optional[[]byte] | Nullable[[]byte]
-	}
-)

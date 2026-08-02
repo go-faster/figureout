@@ -5,77 +5,51 @@ import (
 	"unsafe"
 )
 
-// registerScalar records a scalar field and checks the derived semantic kind
-// against the helper that was used.
-func registerScalar[R any](
+// registerValue records a value field and returns its typed builder.
+func registerValue[R, T any](
 	s *Schema[R],
 	ptr unsafe.Pointer,
 	carrier reflect.Type,
 	name string,
-	want TypeKind,
 	opts []FieldOption,
-) *FieldBuilder {
+) *ValueField[T] {
 	b := s.b
 	reg := b.register(ptr, carrier, name, regField)
-	if reg.goName != "" && reg.typ.Kind != TypeInvalid && reg.typ.Kind != want {
-		b.diags.errorf(CodeUnsupportedType, reg.goName, name,
-			"%s is a %s field, but was registered as %s", reg.goName, reg.typ.Kind, want)
-	}
 	b.applyOptions(reg, opts)
-	return &FieldBuilder{b: b, reg: reg}
+	return &ValueField[T]{&FieldBuilder{b: b, reg: reg}}
 }
 
-// Bool registers a boolean field.
-func Bool[R any, C BoolCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *BoolField {
-	return &BoolField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeBoolean, opts)}
-}
-
-// String registers a string field.
-func String[R any, C StringCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *StringField {
-	return &StringField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeString, opts)}
-}
-
-// Int registers an integer field. Named integer types such as
-// "type Port uint16" are accepted.
-func Int[R any, C IntCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *IntField {
-	return &IntField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeInteger, opts)}
-}
-
-// Float registers a floating point field.
-func Float[R any, C FloatCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *FloatField {
-	return &FloatField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeNumber, opts)}
-}
-
-// Duration registers a [time.Duration] field.
-func Duration[R any, C DurationCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *DurationField {
-	return &DurationField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeDuration, opts)}
-}
-
-// Time registers a [time.Time] field.
-func Time[R any, C TimeCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *TimeField {
-	return &TimeField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeTimestamp, opts)}
-}
-
-// Bytes registers a byte slice field.
-func Bytes[R any, C BytesCarrier](s *Schema[R], field *C, name string, opts ...FieldOption) *BytesField {
-	return &BytesField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeBytes, opts)}
-}
-
-// List registers a slice field.
-func List[R, C any](s *Schema[R], field *C, name string, opts ...FieldOption) *ListField {
-	return &ListField{registerScalar(s, unsafe.Pointer(field), reflect.TypeFor[C](), name, TypeList, opts)}
-}
-
-// Field registers a field of any supported type.
+// Value registers a plain field: one that is always materialized.
 //
-// It is the escape hatch for named types and for carriers the typed helpers do
-// not spell, such as Optional[Port]: the semantic type and the carrier are
-// resolved by reflection instead of by the helper's constraint.
-func Field[R, C any](s *Schema[R], field *C, name string, opts ...FieldOption) *FieldBuilder {
+// The semantic type is derived from T, so named types such as
+// "type Port uint16" are integers with whatever the type registry adds. A
+// missing value is an error unless the field has an applied default; use
+// [Optional] or [Nullable] for a field a source may leave out.
+func Value[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
 	b := s.b
-	reg := b.register(unsafe.Pointer(field), reflect.TypeFor[C](), name, regField)
-	b.applyOptions(reg, opts)
-	return &FieldBuilder{b: b, reg: reg}
+	f := registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[T](), name, opts)
+	if f.ok() && f.reg.acc.presence != PresenceRequired {
+		b.diags.errorf(CodeUnsupportedType, f.reg.goName, name,
+			"%s carries %s presence; register it with Optional or Nullable",
+			f.reg.goName, f.reg.acc.presence)
+	}
+	return f
+}
+
+// Optional registers a field that a source may leave out.
+//
+// The element type is inferred from the carrier, so the builder and its
+// constraints are typed as T rather than as OptionalOf[T].
+func Optional[R, T any](s *Schema[R], field *OptionalOf[T], name string, opts ...FieldOption) *ValueField[T] {
+	return registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[OptionalOf[T]](), name, opts)
+}
+
+// Nullable registers a field that a source may leave out or set to null.
+//
+// Only sources that model null, such as JSON and YAML, can produce the null
+// state.
+func Nullable[R, T any](s *Schema[R], field *NullableOf[T], name string, opts ...FieldOption) *ValueField[T] {
+	return registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[NullableOf[T]](), name, opts)
 }
 
 // Object registers a nested configuration object described by its own

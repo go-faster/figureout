@@ -19,12 +19,12 @@ type Cfg struct {
 func descriptor(t *testing.T) *figureout.Descriptor[Cfg] {
 	t.Helper()
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Int(s, &c.Port, "port", env.Name("LISTEN_PORT"))
-		figureout.String(s, &c.Legacy, "legacy", env.Alias("OLD_NAME")).
+		figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT"))
+		figureout.Value(s, &c.Legacy, "legacy", env.Alias("OLD_NAME")).
 			ApplyDefault("")
-		figureout.String(s, &c.Skipped, "skipped", env.Skip()).
+		figureout.Value(s, &c.Skipped, "skipped", env.Skip()).
 			ApplyDefault("untouched")
-		figureout.List(s, &c.Tags, "tags", env.Separator(";")).
+		figureout.Value(s, &c.Tags, "tags", env.Separator(";")).
 			ApplyDefault([]string{})
 	})
 	require.NoError(t, err)
@@ -71,8 +71,8 @@ func TestNameCollision(t *testing.T) {
 	}
 
 	d, err := figureout.Derive(func(c *Colliding, s *figureout.Schema[Colliding]) {
-		figureout.Int(s, &c.Port, "port", env.Name("PORT"))
-		figureout.Int(s, &c.AdminPort, "admin_port", env.Name("PORT"))
+		figureout.Value(s, &c.Port, "port", env.Name("PORT"))
+		figureout.Value(s, &c.AdminPort, "admin_port", env.Name("PORT"))
 	})
 	require.NoError(t, err, "the collision is source-specific, not semantic")
 

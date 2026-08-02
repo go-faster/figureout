@@ -11,7 +11,7 @@ variables) and one target (JSON Schema), wired end to end.
 ```go
 type Config struct {
 	Server  Server
-	Timeout figureout.Optional[time.Duration]
+	Timeout figureout.OptionalOf[time.Duration]
 	Level   LogLevel
 
 	logger any
@@ -20,7 +20,7 @@ type Config struct {
 var ConfigDescriptor = figureout.MustDerive(
 	func(c *Config, s *figureout.Schema[Config]) {
 		figureout.Object(s, &c.Server, "server", ServerDescriptor)
-		figureout.Duration(s, &c.Timeout, "timeout").AtLeast(time.Second)
+		figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)
 		figureout.Enum(s, &c.Level, "level").ApplyDefault(LogInfo)
 		figureout.Ignore(s, &c.logger, figureout.Reason("runtime dependency"))
 	},
@@ -37,6 +37,31 @@ schema, diags, err := jsonschema.Generate(ConfigDescriptor, jsonschema.Semantic(
 | `figureout` | descriptor, builder, pointer binding, completeness, constraints, enums, unions, carriers, diagnostics, resolution |
 | `figureout/source/env` | environment variable source |
 | `figureout/schema/jsonschema` | JSON Schema target |
+
+## Presence
+
+Presence is spelled by the registration function, and the value type is
+inferred from the carrier. Constraints are then typed as the element, never as
+the carrier:
+
+```go
+type Config struct {
+	Port    int
+	Timeout figureout.OptionalOf[time.Duration]   // missing | present
+	Grace   figureout.NullableOf[time.Duration]   // missing | null | present
+}
+
+figureout.Value(s, &c.Port, "port").InRange(1, 65535)          // T = int
+figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second) // T = time.Duration
+figureout.Nullable(s, &c.Grace, "grace")
+```
+
+The types carry the `Of` suffix so the plain names stay free for the
+functions. `Value` rejects a carrier field with a diagnostic naming the
+function to use instead, so the two cannot be mixed up silently.
+
+A plain field is required: a missing value is an error unless the field has an
+applied default. Optionality lives in the Go type, never in a pointer.
 
 ## Enum and OneOf
 
@@ -55,9 +80,10 @@ figureout.EnumValues(s, &c.Mode, "mode", []Mode{ModeFast})  // explicit
 
 `Enum` and `EnumSlice` take the provider as a **constraint**, so a type without
 values is a compile error, not a descriptor diagnostic. `EnumFunc` covers
-generators that emit a package-level function rather than a method. For carriers
-the helpers do not spell, such as `Optional[LogLevel]`, use the option form:
-`figureout.Field(s, &c.Level, "level", figureout.EnumOf[LogLevel]())`.
+generators that emit a package-level function rather than a method. An enum
+carried by an `OptionalOf` uses the option form:
+`figureout.Optional(s, &c.Level, "level", figureout.EnumOf[LogLevel]())`. An
+ad-hoc value set with no provider is `.Enum(values...)` on the builder.
 
 `OneOf` is a **type sum**: a tagged union selecting between alternative shapes.
 A discriminator is required, so decoding failures name the tag rather than
@@ -80,13 +106,19 @@ selection.
 Four places where the document's API could not be written as spelled, or where
 a different shape was clearly better.
 
-**`Carrier[T]` cannot be a single generic constraint.** The document proposes
-`interface{ T | Optional[T] | Nullable[T] }`, but Go forbids a bare type
-parameter as a union term. The intent — one helper name per semantic type,
-accepting a plain value or a carrier — is preserved with concrete per-type
-constraints (`DurationCarrier`, `IntCarrier`, …), which keeps full inference at
-the call site. `OptionalDuration`-style duplicate helpers are therefore not
-needed.
+**Presence selects the function; the type is inferred.** The document proposes
+per-semantic-type helpers (`Int`, `String`, `OptionalDuration`, …). A single
+generic `Carrier[T]` constraint that would collapse those pairs cannot be
+written — Go forbids a bare type parameter as a union term — so the split runs
+the other way: `Value`, `Optional` and `Nullable` infer the element type from
+the carrier, and there is exactly one registration function per presence rather
+than two per semantic type.
+
+The trade is that a wrong semantic kind is a compilation diagnostic instead of
+a compile error, since `Value[T]` accepts any `T`; the document's §2.3 example
+`figureout.Int(s, &c.Host, "host")` no longer applies. In exchange, constraints
+are typed as the element — `AtLeast(time.Second)` on an `OptionalOf[Duration]`,
+not `AtLeast(any)`.
 
 **`FieldOption` is not generic.** `FieldOption[V]` would force every option call
 site to spell its type argument, because Go cannot infer a type argument for a
@@ -95,9 +127,11 @@ operations (`ApplyDefault`, `Check`) live on the fluent builder or on generic
 top-level helpers where inference works from the argument, as in
 `figureout.Check("even", func(v int) error { … })`.
 
-**Model types are suffixed.** `Field`, `Object` and `Variant` are registration
-functions in the public API, so the model types are `FieldModel`, `ObjectModel`
-and `VariantModel`, following the document's own `DescriptorModel`.
+**Model and carrier types are suffixed.** `Object` and `Variant` are
+registration functions, so the model types are `FieldModel`, `ObjectModel` and
+`VariantModel`, following the document's own `DescriptorModel`. For the same
+reason the carriers are `OptionalOf[T]` and `NullableOf[T]`, leaving `Optional`
+and `Nullable` free as registration functions.
 
 **Registering descendants covers the parent.** The document leaves this open
 (§22.5). Registering `&c.Server.Port` without registering `c.Server` is
@@ -109,7 +143,7 @@ duplicate.
 
 The design's later phases: YAML, TOML, JSON and flag sources; CUE; generated
 documentation; collection merge policies; code generation; optimized unsafe
-accessors. `Nullable` is modelled and materialized, but no current source
+accessors. `NullableOf` is modelled and materialized, but no current source
 produces an explicit null, since environment variables cannot express one.
 
 ## Development
