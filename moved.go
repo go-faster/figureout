@@ -1,6 +1,9 @@
 package figureout
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // placeMoved inserts a deprecated shadow field for every former path declared
 // with [MovedFrom].
@@ -131,26 +134,32 @@ func skipsOf(f *FieldModel) map[SourceID]*SourceProjection {
 // Both spellings at once is an error rather than a precedence rule: they are
 // two intentions in one configuration, and picking one silently is the answer
 // most likely to be wrong.
-func (m *Model) applyMoved(state map[string]*merged, rep *Report) {
+func (m *Model) applyMoved(res *resolution, rep *Report) {
+	state := res.values
 	for _, f := range m.fields {
 		target := f.movedTo
 		if target == nil {
 			continue
 		}
-		st, ok := state[f.Path]
-		if !ok || !st.set {
+
+		// A former path covers a whole subtree, not only its own value: a
+		// nested object, or the object spelling of a [ScalarOr] field, sets its
+		// members rather than the field itself.
+		moved := setUnder(state, f.Path)
+		if len(moved) == 0 {
 			continue
 		}
-		origin := st.assignment.Origin
+		origin := state[moved[0]].assignment.Origin
 
-		if ts, ok := state[target.Path]; ok && ts.set {
+		if conflicting := setUnder(state, target.Path); len(conflicting) > 0 {
 			rep.Diagnostics = append(rep.Diagnostics, Diagnostic{
 				Severity:  SeverityError,
 				Code:      CodeMovedConflict,
 				FieldPath: f.Path,
 				GoPath:    target.GoName,
 				Message: "moved to " + target.Path + ", and both are set (" +
-					ts.assignment.Origin.String() + "); remove the deprecated spelling",
+					state[conflicting[0]].assignment.Origin.String() +
+					"); remove the deprecated spelling",
 				Origin: &origin,
 			})
 			continue
@@ -170,8 +179,30 @@ func (m *Model) applyMoved(state map[string]*merged, rep *Report) {
 			// not resurrect it.
 			continue
 		}
-		moved := st.assignment
-		moved.Path = target.Path
-		state[target.Path] = &merged{assignment: moved, set: true}
+		for _, path := range moved {
+			rest := path[len(f.Path):]
+			assignment := state[path].assignment
+			assignment.Path = target.Path + rest
+			state[target.Path+rest] = &merged{assignment: assignment, set: true}
+			delete(state, path)
+		}
+		res.moveCollections(f.Path, target.Path)
 	}
+}
+
+// setUnder returns the paths carrying a value at path or below it, in a stable
+// order.
+func setUnder(state map[string]*merged, path string) []string {
+	var out []string
+	if st, ok := state[path]; ok && st.set {
+		out = append(out, path)
+	}
+	prefix := path + "."
+	for p, st := range state {
+		if st.set && strings.HasPrefix(p, prefix) {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

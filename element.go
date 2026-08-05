@@ -217,6 +217,19 @@ func (m *Model) resolveElements(res *resolution, path string) (string, bool) {
 	}
 }
 
+// moveCollections re-roots collection state from one path prefix to another, so
+// a former path that carried a list hands over its elements and their order.
+func (r *resolution) moveCollections(from, to string) {
+	prefix := from + "."
+	for path, c := range r.collections {
+		if path != from && !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		r.collections[to+path[len(from):]] = c
+		delete(r.collections, path)
+	}
+}
+
 // startLayer forgets the previous layer's subscript translation.
 func (r *resolution) startLayer() {
 	for _, c := range r.collections {

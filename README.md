@@ -492,6 +492,9 @@ figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
 - the old path appears in generated schemas as a deprecated property, never as
   a second field; a level that no longer exists is rebuilt as a deprecated
   object, so old nesting keeps parsing
+- a former path covers the whole subtree beneath it, so a moved object hands
+  over every member, and a moved `ScalarOr` field moves whichever spelling was
+  used
 
 A former path is a fact about **documents**. `env` and `file` derive their names
 from the path, and `database_dsn` and `database.dsn` derive the same variable,

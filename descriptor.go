@@ -168,6 +168,10 @@ func (m *Model) reindex() {
 				if f.Meta.Deprecated == "" {
 					f.Meta.Deprecated = "moved to " + f.MovedTo
 				}
+				// The shadow's structure is its target's, so it is indexed
+				// under the former path rather than walked and re-pathed.
+				m.indexShadow(f)
+				continue
 			}
 			switch {
 			case f.Type.Object != nil:
@@ -183,6 +187,45 @@ func (m *Model) reindex() {
 		}
 	}
 	walk(m.Root)
+}
+
+// indexShadow makes the members of a structured former path findable, without
+// disturbing the models they are borrowed from.
+//
+// A shadow shares its target's object, union and element models, so its members
+// resolve to the very same [FieldModel] values: a lookup under the old path
+// finds the field that describes it, with the right merge policy and Go name.
+func (m *Model) indexShadow(shadow *FieldModel) {
+	var walk func(o *ObjectModel, prefix string)
+	walk = func(o *ObjectModel, prefix string) {
+		for _, f := range o.Fields {
+			path := prefix + f.Name
+			m.byPath[path] = f
+			switch {
+			case f.Type.Object != nil:
+				walk(f.Type.Object, path+".")
+			case f.Type.Union != nil:
+				for _, v := range f.Type.Union.Variants {
+					walk(v.Object, path+".")
+				}
+			}
+			if elem, ok := collectionOf(f); ok {
+				walk(elem, ElementPath(path, "")+".")
+			}
+		}
+	}
+
+	switch {
+	case shadow.Type.Object != nil:
+		walk(shadow.Type.Object, shadow.Path+".")
+	case shadow.Type.Union != nil:
+		for _, v := range shadow.Type.Union.Variants {
+			walk(v.Object, shadow.Path+".")
+		}
+	}
+	if elem, ok := collectionOf(shadow); ok {
+		walk(elem, ElementPath(shadow.Path, "")+".")
+	}
 }
 
 // Descriptor is an immutable compiled configuration description.

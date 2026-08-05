@@ -166,7 +166,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		rep.Diagnostics = append(rep.Diagnostics, layer.Diagnostics...)
 		d.model.fold(res, layer, rep)
 	}
-	d.model.applyMoved(res.values, rep)
+	d.model.applyMoved(res, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		return cfg, rep, err
 	}

@@ -282,3 +282,110 @@ func TestMovedFromEmptyPath(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty former path")
 }
+
+// movedSecret is the shape a moved credential has in a real deployment: a
+// scalar, or the object spelling that says where to read it from.
+type movedSecret struct{ Value, File string }
+
+var movedSecretDescriptor = figureout.MustDerive(
+	func(c *movedSecret, s *figureout.Schema[movedSecret]) {
+		figureout.Value(s, &c.Value, "value", figureout.Secret()).ApplyDefault("")
+		figureout.Value(s, &c.File, "file").ApplyDefault("")
+	},
+)
+
+type movedSecretConfig struct {
+	Database struct{ DSN movedSecret }
+}
+
+func movedSecretDescriptorFor(t *testing.T) *figureout.Descriptor[movedSecretConfig] {
+	t.Helper()
+	d, err := figureout.Derive(func(c *movedSecretConfig, s *figureout.Schema[movedSecretConfig]) {
+		figureout.Group(s, "database", func(s *figureout.Schema[movedSecretConfig]) {
+			figureout.ScalarOr(s, &c.Database.DSN, "dsn", movedSecretDescriptor,
+				func(v string) movedSecret { return movedSecret{Value: v} },
+				figureout.MovedFrom("database_dsn"))
+		})
+	})
+	require.NoError(t, err)
+	return d
+}
+
+func TestMovedFromKeepsTheTargetsOwnPaths(t *testing.T) {
+	// A shadow borrows its target's models by pointer; walking them would
+	// re-path the target's members under the former name.
+	m := movedSecretDescriptorFor(t).Model()
+
+	f, ok := m.FieldByPath("database.dsn.value")
+	require.True(t, ok, "the target's members keep their own paths")
+	require.Equal(t, "database.dsn.value", f.Path)
+
+	_, ok = m.FieldByPath("database_dsn.value")
+	require.True(t, ok, "and the former path is findable too")
+}
+
+func TestMovedFromRedirectsTheObjectSpelling(t *testing.T) {
+	// The object spelling used to vanish without a value or a diagnostic, which
+	// for a moved credential meant dropping it on the floor.
+	cfg, report, err := movedSecretDescriptorFor(t).Resolve(
+		yaml.Bytes([]byte("database_dsn:\n  value: postgres://old\n")))
+	require.NoError(t, err)
+	require.Equal(t, movedSecret{Value: "postgres://old"}, cfg.Database.DSN)
+	require.Equal(t, []string{"database_dsn: deprecated, use database.dsn"},
+		warnings(report.Diagnostics))
+
+	origin, ok := report.OriginOf("database.dsn.value")
+	require.True(t, ok, "the redirected value keeps its provenance")
+	require.Equal(t, 2, origin.Line)
+}
+
+func TestMovedFromRedirectsTheScalarSpelling(t *testing.T) {
+	cfg, report, err := movedSecretDescriptorFor(t).Resolve(
+		yaml.Bytes([]byte(`database_dsn: postgres://old`)))
+	require.NoError(t, err)
+	require.Equal(t, movedSecret{Value: "postgres://old"}, cfg.Database.DSN)
+	require.Len(t, warnings(report.Diagnostics), 1)
+}
+
+func TestMovedFromCurrentObjectSpelling(t *testing.T) {
+	cfg, report, err := movedSecretDescriptorFor(t).Resolve(
+		yaml.Bytes([]byte("database:\n  dsn:\n    value: x\n")))
+	require.NoError(t, err)
+	require.Equal(t, movedSecret{Value: "x"}, cfg.Database.DSN)
+	require.Empty(t, report.Diagnostics)
+}
+
+func TestMovedFromConflictAcrossSpellings(t *testing.T) {
+	// Both spellings set is an error however either one is written.
+	for _, tc := range []struct{ name, doc string }{
+		{"both objects", "database_dsn:\n  value: old\ndatabase:\n  dsn:\n    value: new\n"},
+		{"old object, new scalar", "database_dsn:\n  value: old\ndatabase:\n  dsn: new\n"},
+		{"old scalar, new object", "database_dsn: old\ndatabase:\n  dsn:\n    value: new\n"},
+		{"both scalars", "database_dsn: old\ndatabase:\n  dsn: new\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := movedSecretDescriptorFor(t).Resolve(yaml.Bytes([]byte(tc.doc)))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), figureout.CodeMovedConflict)
+		})
+	}
+}
+
+func TestMovedFromRedirectsANestedObject(t *testing.T) {
+	type endpoint struct{ Host, Port string }
+	type cfg struct{ API endpoint }
+
+	d, err := figureout.Derive(func(c *cfg, s *figureout.Schema[cfg]) {
+		figureout.ObjectFunc(s, &c.API, "api", func(c *endpoint, s *figureout.Schema[endpoint]) {
+			figureout.Value(s, &c.Host, "host").ApplyDefault("")
+			figureout.Value(s, &c.Port, "port").ApplyDefault("")
+		}, figureout.MovedFrom("server"))
+	})
+	require.NoError(t, err)
+
+	resolved, report, err := d.Resolve(yaml.Bytes([]byte("server:\n  host: h\n  port: p\n")))
+	require.NoError(t, err)
+	require.Equal(t, endpoint{Host: "h", Port: "p"}, resolved.API,
+		"every member of a moved object comes across")
+	require.Len(t, warnings(report.Diagnostics), 1)
+}
