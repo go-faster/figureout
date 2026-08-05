@@ -7,6 +7,8 @@ package jsonschema
 
 import (
 	"encoding/json"
+	"reflect"
+	"time"
 
 	"github.com/go-faster/figureout"
 )
@@ -22,6 +24,7 @@ const (
 	keyType       = "type"
 	keyProperties = "properties"
 	keyRequired   = "required"
+	typeInteger   = "integer"
 )
 
 // Diagnostic codes reported by generation.
@@ -195,17 +198,19 @@ func (g *generator) field(f *figureout.FieldModel) map[string]any {
 		doc = g.scalar(f)
 	}
 
-	if f.Meta.Doc != "" {
-		doc["description"] = f.Meta.Doc
+	// A unit-scaled duration is an integer on the wire, and the unit is the
+	// only thing that says what the integer counts.
+	if description := describeUnit(f.Meta.Doc, f.Type.Unit); description != "" {
+		doc["description"] = description
 	}
 	if f.Meta.Deprecated != "" {
 		doc["deprecated"] = true
 	}
 	if len(f.Meta.Examples) > 0 {
-		doc["examples"] = f.Meta.Examples
+		doc["examples"] = wireValues(f.Type, f.Meta.Examples)
 	}
 	if f.Default != nil {
-		doc["default"] = f.Default.Value
+		doc["default"] = wireValue(f.Type, f.Default.Value)
 	}
 	g.applyPatches(f, doc)
 	return doc
@@ -243,7 +248,7 @@ func (g *generator) scalar(f *figureout.FieldModel) map[string]any {
 		doc[keyType] = types
 	}
 
-	if format := formatOf(f.Type.Kind); format != "" {
+	if format := formatOfType(f.Type); format != "" {
 		doc["format"] = format
 	}
 	if f.Type.Kind == figureout.TypeBytes {
@@ -272,7 +277,7 @@ func (g *generator) types(f *figureout.FieldModel) []string {
 		}
 	}
 	if len(out) == 0 {
-		out = []string{jsonType(f.Type.Kind)}
+		out = []string{jsonTypeOf(f.Type)}
 	}
 	// Null is a merge directive rather than a value: a source spells it to
 	// erase what earlier layers set. It therefore belongs in a schema that
@@ -309,7 +314,7 @@ func jsonType(k figureout.TypeKind) string {
 	case figureout.TypeBoolean:
 		return "boolean"
 	case figureout.TypeInteger:
-		return "integer"
+		return typeInteger
 	case figureout.TypeNumber:
 		return "number"
 	case figureout.TypeString, figureout.TypeBytes, figureout.TypeDuration, figureout.TypeTimestamp:
@@ -332,6 +337,65 @@ func formatOf(k figureout.TypeKind) string {
 	}
 }
 
+// jsonTypeOf is [jsonType] aware of a declared unit, which turns a duration
+// into the integer it is actually written as.
+func jsonTypeOf(t figureout.Type) string {
+	if t.Kind == figureout.TypeDuration && t.Unit > 0 {
+		return typeInteger
+	}
+	return jsonType(t.Kind)
+}
+
+func formatOfType(t figureout.Type) string {
+	if t.Kind == figureout.TypeDuration && t.Unit > 0 {
+		return ""
+	}
+	return formatOf(t.Kind)
+}
+
+// describeUnit names what a unit-scaled integer counts, keeping any
+// documentation the field already carries.
+func describeUnit(doc string, unit time.Duration) string {
+	if unit <= 0 {
+		return doc
+	}
+	in := "In " + figureout.Type{Unit: unit}.UnitName() + "."
+	if doc == "" {
+		return in
+	}
+	return doc + " " + in
+}
+
+// wireValue renders a semantic value the way the field is written on the wire.
+//
+// A duration is nanoseconds in Go and either a duration string or a count of
+// its unit in a document; emitting the Go number would document a value no
+// source would accept.
+func wireValue(t figureout.Type, v any) any {
+	if t.Kind != figureout.TypeDuration {
+		return v
+	}
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() || !rv.CanConvert(durationType) {
+		return v
+	}
+	d := time.Duration(rv.Convert(durationType).Int())
+	if t.Unit > 0 {
+		return int64(d / t.Unit)
+	}
+	return d.String()
+}
+
+func wireValues(t figureout.Type, values []any) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = wireValue(t, v)
+	}
+	return out
+}
+
+var durationType = reflect.TypeFor[time.Duration]()
+
 func (g *generator) constraints(f *figureout.FieldModel, doc map[string]any) {
 	for _, c := range f.Constraints {
 		switch c := c.(type) {
@@ -339,7 +403,7 @@ func (g *generator) constraints(f *figureout.FieldModel, doc map[string]any) {
 			// A duration or timestamp is a string on the wire, where numeric
 			// bounds have no meaning. Report rather than emit a keyword that
 			// no validator would apply.
-			if jsonType(f.Type.Kind) != "integer" && jsonType(f.Type.Kind) != "number" {
+			if wire := jsonTypeOf(f.Type); wire != typeInteger && wire != "number" {
 				g.diags = append(g.diags, figureout.Diagnostic{
 					Severity:  figureout.SeverityWarning,
 					Code:      CodeNotRepresentable,
@@ -352,10 +416,10 @@ func (g *generator) constraints(f *figureout.FieldModel, doc map[string]any) {
 				continue
 			}
 			if c.Minimum != nil {
-				doc[minimumKey(c.ExclusiveMinimum)] = c.Minimum
+				doc[minimumKey(c.ExclusiveMinimum)] = wireValue(f.Type, c.Minimum)
 			}
 			if c.Maximum != nil {
-				doc[maximumKey(c.ExclusiveMaximum)] = c.Maximum
+				doc[maximumKey(c.ExclusiveMaximum)] = wireValue(f.Type, c.Maximum)
 			}
 		case figureout.LengthConstraint:
 			minKey, maxKey := "minLength", "maxLength"
@@ -369,7 +433,7 @@ func (g *generator) constraints(f *figureout.FieldModel, doc map[string]any) {
 				doc[maxKey] = *c.Maximum
 			}
 		case figureout.EnumConstraint:
-			doc["enum"] = c.Values
+			doc["enum"] = wireValues(f.Type, c.Values)
 		case figureout.PatternConstraint:
 			doc["pattern"] = c.Expression
 		case figureout.CheckConstraint:

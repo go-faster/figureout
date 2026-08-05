@@ -1,6 +1,10 @@
 package figureout
 
-import "github.com/go-faster/errors"
+import (
+	"time"
+
+	"github.com/go-faster/errors"
+)
 
 // FieldOption customizes a field registration.
 //
@@ -35,6 +39,8 @@ type FieldOptionContext interface {
 	AddConstraint(Constraint) error
 	AddMetadata(Metadata) error
 	AddTargetAnnotation(TargetID, any) error
+	// SetUnit scales bare numbers written for a duration field.
+	SetUnit(time.Duration) error
 
 	// SetSourceNames sets the primary name and aliases for a source.
 	SetSourceNames(SourceID, ...string) error
@@ -78,6 +84,17 @@ func (c *fieldContext) AddMetadata(m Metadata) error {
 		c.reg.meta.Hidden = true
 	}
 	c.reg.meta.Examples = append(c.reg.meta.Examples, m.Examples...)
+	return nil
+}
+
+func (c *fieldContext) SetUnit(u time.Duration) error {
+	if u <= 0 {
+		return errors.New("unit must be positive")
+	}
+	if c.reg.typ.Kind != TypeDuration {
+		return errors.Errorf("a unit applies to a duration field, not to a %s one", c.reg.typ.Kind)
+	}
+	c.reg.typ.Unit = u
 	return nil
 }
 
@@ -188,6 +205,26 @@ func WithDecoder(id SourceID, d Decoder, shapes ...Shape) FieldOption {
 			return err
 		}
 		return c.AddSourceShapes(id, shapes...)
+	})
+}
+
+// Unit lets a duration field be written as a bare number of u.
+//
+// Unit-suffixed integer keys outlive the configurations that introduced them,
+// and moving one onto [time.Duration] normally means changing what the key
+// accepts — 180 would have to become "180s", which breaks every deployment
+// already running. A unit keeps the key and still resolves a [time.Duration]:
+//
+//	figureout.Value(s, &c.Timeout, "timeout_seconds", figureout.Unit(time.Second))
+//
+//	timeout_seconds: 180     // 180 * time.Second
+//	timeout_seconds: "3m"    // still accepted, so a rename is a pure alias change
+//
+// Generated schemas describe the canonical form: an integer, with the unit
+// named in the description.
+func Unit(u time.Duration) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		return c.SetUnit(u)
 	})
 }
 

@@ -294,6 +294,33 @@ when that schema describes what a source accepts, and only where erasing
 leaves something to fall back on — `jsonschema.ForSource(...)` emits it,
 `jsonschema.Semantic()` never does.
 
+## Durations and units
+
+Unit-suffixed integer keys outlive the configurations that introduced them.
+Moving `timeout_seconds` onto `time.Duration` normally changes what the key
+accepts — `180` would have to become `"180s"` — which breaks every deployment
+already running. `Unit` keeps the key and still resolves a `time.Duration`:
+
+```go
+figureout.Value(s, &c.Timeout, "timeout_seconds", figureout.Unit(time.Second)).
+	AtLeast(time.Second).
+	AtMost(10 * time.Minute)
+```
+
+```yaml
+timeout_seconds: 180     # 180 * time.Second
+timeout_seconds: "3m"    # still accepted
+```
+
+Constraints stay typed as `time.Duration`, so the bound reads `AtLeast(time.Second)`
+rather than `AtLeast(1)`. The generated schema describes the canonical form —
+`{"type": "integer", "minimum": 1, "description": "… In seconds."}` — because
+that is what the key is actually written as. Durations without a unit stay
+strings, with their defaults and bounds spelled the way a source accepts them.
+
+Because the duration spelling keeps working, migrating away is two safe steps:
+add the unit, then add the duration-spelled key and deprecate the old one.
+
 ## Enum and OneOf
 
 The two are separate concepts, and the API keeps them apart.

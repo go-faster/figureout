@@ -56,10 +56,38 @@ type Type struct {
 	// unwrapped.
 	Go reflect.Type
 
+	// Unit scales a bare number written for a [TypeDuration] field, so that
+	// "timeout_seconds: 180" resolves to 180 * time.Second. Zero means the
+	// field is only spelled as a duration. See [Unit].
+	Unit time.Duration
+
 	Elem   *Type        // list element, map value
 	Key    *Type        // map key
 	Object *ObjectModel // object fields
 	Union  *Union       // union variants
+}
+
+// UnitName names what a unit-scaled integer counts, for diagnostics and
+// generated documentation. It is empty when the type declares no unit.
+func (t Type) UnitName() string {
+	switch t.Unit {
+	case 0:
+		return ""
+	case time.Nanosecond:
+		return "nanoseconds"
+	case time.Microsecond:
+		return "microseconds"
+	case time.Millisecond:
+		return "milliseconds"
+	case time.Second:
+		return "seconds"
+	case time.Minute:
+		return "minutes"
+	case time.Hour:
+		return "hours"
+	default:
+		return "units of " + t.Unit.String()
+	}
 }
 
 // Union is a tagged sum of object variants.
