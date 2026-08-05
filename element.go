@@ -217,6 +217,19 @@ func (m *Model) resolveElements(res *resolution, path string) (string, bool) {
 	}
 }
 
+// moveCollections re-roots collection state from one path prefix to another, so
+// a former path that carried a list hands over its elements and their order.
+func (r *resolution) moveCollections(from, to string) {
+	prefix := from + "."
+	for path, c := range r.collections {
+		if path != from && !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		r.collections[to+path[len(from):]] = c
+		delete(r.collections, path)
+	}
+}
+
 // startLayer forgets the previous layer's subscript translation.
 func (r *resolution) startLayer() {
 	for _, c := range r.collections {
@@ -266,7 +279,11 @@ func (m *Model) foldCollectionItself(res *resolution, a Assignment, f *FieldMode
 	case a.State == ValueNull:
 		res.clear(a.Path)
 		origin := a.Origin
-		res.collection(a.Path).erased = &origin
+		c := res.collection(a.Path)
+		c.erased = &origin
+		// Erased is not provided: the field falls back the way an absent one
+		// does, which for a collection is an empty one.
+		c.provided = false
 		return
 	case f.Merge == MergeReplace:
 		// A layer that provides the list provides all of it: the elements it

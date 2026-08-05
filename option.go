@@ -297,6 +297,12 @@ func Doc(text string) FieldOption {
 // The same registration inside [ObjectFunc] cannot express it: the field is
 // declared by the nested descriptor, where "http_addr" resolves to the field
 // itself rather than to the document root, and is reported as such.
+//
+// A former path is a fact about documents, not about environment variables:
+// sources that derive a name from the path skip a former one, because
+// "database_dsn" and "database.dsn" derive the same variable and binding both
+// would collide by construction. Where a variable really did exist under an old
+// name, name it with that source's alias option.
 func MovedFrom(paths ...string) FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
 		if len(paths) == 0 {

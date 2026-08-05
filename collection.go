@@ -181,6 +181,12 @@ func (f *ListField) Doc(text string) *ListField {
 	return f
 }
 
+// Required makes an absent list an error instead of an empty one.
+func (f *ListField) Required() *ListField {
+	f.FieldBuilder.Required()
+	return f
+}
+
 // MergeReplace takes the list from the last layer that provided one. It is the
 // default.
 func (f *ListField) MergeReplace() *ListField {
@@ -242,6 +248,12 @@ type MapField struct{ *FieldBuilder }
 // Doc attaches documentation.
 func (f *MapField) Doc(text string) *MapField {
 	f.FieldBuilder.Doc(text)
+	return f
+}
+
+// Required makes an absent map an error instead of an empty one.
+func (f *MapField) Required() *MapField {
+	f.FieldBuilder.Required()
 	return f
 }
 

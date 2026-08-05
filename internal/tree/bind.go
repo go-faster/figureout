@@ -212,6 +212,17 @@ func (b Binder) elements(
 	node *Node,
 	path, docPath string,
 ) {
+	if node.Kind == Null {
+		// Null erases a collection as it erases anything else, rather than
+		// being a shape it could have been written in.
+		if !b.AllowNull {
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(path, b.origin(docPath, node.Pos))
+		return
+	}
 	if node.Kind != Array {
 		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
 			"%s must be an array, got %s", docPath, node.Kind)
@@ -279,6 +290,17 @@ func (b Binder) entries(
 	node *Node,
 	path, docPath string,
 ) {
+	if node.Kind == Null {
+		// Null erases a collection as it erases anything else, rather than
+		// being a shape it could have been written in.
+		if !b.AllowNull {
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(path, b.origin(docPath, node.Pos))
+		return
+	}
 	if node.Kind != Object {
 		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
 			"%s must be an object, got %s", docPath, node.Kind)

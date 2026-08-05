@@ -96,6 +96,7 @@ type registration struct {
 
 	meta        Metadata
 	def         *Default
+	required    bool
 	merge       MergePolicy
 	mergeKey    string
 	movedFrom   []string
@@ -384,6 +385,7 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 			Sources:     reg.sources,
 			Targets:     reg.targets,
 			MovedFrom:   reg.movedFrom,
+			required:    reg.required,
 			widen:       reg.widen,
 			acc:         reg.acc,
 		}
@@ -406,6 +408,12 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 func prefixPaths(o *ObjectModel, prefix string) {
 	for _, f := range o.Fields {
 		f.Path = prefix + f.Name
+		if f.movedTo != nil {
+			// A shadow carries its target's models by pointer. Walking them
+			// here would re-path the target's own members under the former
+			// name, which is the field's real description.
+			continue
+		}
 		switch {
 		case f.Type.Object != nil:
 			prefixPaths(f.Type.Object, f.Path+".")

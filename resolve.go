@@ -166,7 +166,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		rep.Diagnostics = append(rep.Diagnostics, layer.Diagnostics...)
 		d.model.fold(res, layer, rep)
 	}
-	d.model.applyMoved(res.values, rep)
+	d.model.applyMoved(res, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		return cfg, rep, err
 	}
@@ -178,6 +178,11 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		}
 		if st.set {
 			values[path] = st.assignment
+		}
+	}
+	for path, c := range res.collections {
+		if c.erased != nil {
+			rep.erased[path] = *c.erased
 		}
 	}
 
@@ -527,8 +532,36 @@ func (m *Model) applyDefault(f *FieldModel, v reflect.Value, path string, rep *R
 		}
 		return
 	}
-	if f.Presence == PresenceRequired {
+	// An absent collection and an empty one are the same statement about the
+	// world, so a list nobody configured resolves to an empty list rather than
+	// to a diagnostic. Required opts back in.
+	if empty, ok := emptyCollection(f.Type); ok && !f.required {
+		if err := f.acc.set(v, empty); err != nil {
+			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
+		}
+		return
+	}
+	if f.Required() {
 		rep.diag(f, path, nil, CodeMissingDefinition, "no value provided and no default")
+	}
+}
+
+// emptyCollection builds the empty value of a list or map type.
+//
+// It is non-nil on purpose: a consumer ranging over it sees no elements either
+// way, but a nil slice encodes as JSON null, and "the sites list is empty"
+// should not read as "the sites list is absent" one layer further out.
+func emptyCollection(t Type) (any, bool) {
+	switch t.Kind {
+	case TypeList:
+		if t.Go.Kind() != reflect.Slice {
+			return nil, false
+		}
+		return reflect.MakeSlice(t.Go, 0, 0).Interface(), true
+	case TypeMap:
+		return reflect.MakeMap(t.Go).Interface(), true
+	default:
+		return nil, false
 	}
 }
 
