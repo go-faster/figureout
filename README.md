@@ -493,6 +493,13 @@ figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
   a second field; a level that no longer exists is rebuilt as a deprecated
   object, so old nesting keeps parsing
 
+A former path is a fact about **documents**. `env` and `file` derive their names
+from the path, and `database_dsn` and `database.dsn` derive the same variable,
+so a shadow would collide with its own target; both sources skip former paths
+and read the field under its current name. Where a variable really did exist
+under an old name, that is what `env.Alias` is for — an env-side fact,
+independent of the file-side rename.
+
 The path is relative to the declaring descriptor, so it can name a former level.
 That scope is also what decides whether a former path is expressible at all:
 `Group` above keeps the field declared by the root schema, so root-relative

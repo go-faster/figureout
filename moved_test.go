@@ -95,13 +95,77 @@ func TestMovedFromAcrossLayers(t *testing.T) {
 	require.Contains(t, err.Error(), figureout.CodeMovedConflict)
 }
 
-func TestMovedFromEnv(t *testing.T) {
+func TestMovedFromEnvBindsTheTarget(t *testing.T) {
+	// A former *file* key does not imply a former variable, so env reads the
+	// field under its current name and says nothing about the old one.
 	cfg, report, err := movedDescriptor(t).Resolve(env.Values(map[string]string{
-		"HTTP_ADDR": ":9090",
+		"API_HTTP_ADDR": ":9090",
 	}))
 	require.NoError(t, err)
 	require.Equal(t, ":9090", cfg.HTTPAddr)
-	require.Len(t, warnings(report.Diagnostics), 1)
+	require.Empty(t, warnings(report.Diagnostics))
+
+	cfg, _, err = movedDescriptor(t).Resolve(env.Values(map[string]string{
+		"HTTP_ADDR": ":9090",
+	}))
+	require.NoError(t, err)
+	require.Equal(t, ":8080", cfg.HTTPAddr, "the shadow has no variable of its own")
+}
+
+// flatConfig is the rename MovedFrom exists for: a flat key becomes a section.
+type flatConfig struct {
+	Database struct{ DSN string }
+}
+
+func flatDescriptor(t *testing.T) *figureout.Descriptor[flatConfig] {
+	t.Helper()
+	d, err := figureout.Derive(func(c *flatConfig, s *figureout.Schema[flatConfig]) {
+		figureout.Group(s, "database", func(s *figureout.Schema[flatConfig]) {
+			figureout.Value(s, &c.Database.DSN, "dsn",
+				figureout.MovedFrom("database_dsn")).ApplyDefault("")
+		})
+	})
+	require.NoError(t, err)
+	return d
+}
+
+func TestMovedFromEnvNoSelfCollision(t *testing.T) {
+	// "database_dsn" and "database.dsn" derive the same variable by
+	// construction, so a shadow that claimed one would collide with its own
+	// target and refuse the descriptor outright.
+	cfg, report, err := flatDescriptor(t).Resolve(env.Values(map[string]string{
+		"DATABASE_DSN": "postgres://localhost",
+	}))
+	require.NoError(t, err)
+	require.Equal(t, "postgres://localhost", cfg.Database.DSN)
+	require.Empty(t, report.Diagnostics)
+}
+
+func TestMovedFromEnvAliasNamesAnOldVariable(t *testing.T) {
+	// When a variable really did exist under an old name, that is what Alias is
+	// for: it is an env-side fact, independent of the file-side rename.
+	d, err := figureout.Derive(func(c *flatConfig, s *figureout.Schema[flatConfig]) {
+		figureout.Group(s, "database", func(s *figureout.Schema[flatConfig]) {
+			figureout.Value(s, &c.Database.DSN, "dsn",
+				figureout.MovedFrom("database_dsn"),
+				env.Alias("LEGACY_DSN"),
+			).ApplyDefault("")
+		})
+	})
+	require.NoError(t, err)
+
+	cfg, _, err := d.Resolve(env.Values(map[string]string{"LEGACY_DSN": "postgres://old"}))
+	require.NoError(t, err)
+	require.Equal(t, "postgres://old", cfg.Database.DSN)
+}
+
+func TestMovedFromFileStillReadsTheOldKey(t *testing.T) {
+	// The file-side deprecation is untouched: only the derived variable name
+	// went away.
+	cfg, report, err := flatDescriptor(t).Resolve(yaml.Bytes([]byte(`database_dsn: postgres://old`)))
+	require.NoError(t, err)
+	require.Equal(t, "postgres://old", cfg.Database.DSN)
+	require.Equal(t, []string{"database_dsn: deprecated, use database.dsn"}, warnings(report.Diagnostics))
 }
 
 func TestDeprecatedFieldWarnsWhenSet(t *testing.T) {

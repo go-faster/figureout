@@ -252,6 +252,13 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 			for _, variant := range f.Type.Union.Variants {
 				p.object(variant.Object, own)
 			}
+		case f.Moved():
+			// A former *file* key does not imply a former variable. The name
+			// derived from an old path is usually the very name the target
+			// derives — "database_dsn" and "database.dsn" are one variable by
+			// construction — so binding both would collide by design. Use
+			// Alias when a variable really did exist under an old name.
+			continue
 		case isCollection(f):
 			// A list or map of objects has no spelling here. An index
 			// convention would be a second, worse way to write the same
