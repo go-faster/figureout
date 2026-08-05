@@ -212,6 +212,11 @@ func (m *Model) fold(state map[string]*merged, layer *Layer, rep *Report) {
 			f, policy = found, found.Merge
 		}
 
+		// A [ScalarOr] field written both ways does not merge: the two
+		// spellings describe the same value, so the later one replaces the
+		// other outright rather than half-filling an object.
+		m.dropOtherSpelling(state, a.Path)
+
 		st, ok := state[a.Path]
 		if !ok {
 			st = &merged{}
@@ -307,6 +312,12 @@ func (m *Model) materialize(o *ObjectModel, v reflect.Value, values map[string]A
 		case f.Type.Union != nil:
 			m.materializeUnion(f, v, values, rep)
 		case f.Type.Object != nil:
+			// A [ScalarOr] field written as a scalar carries a value of its
+			// own, which stands for the whole object.
+			if a, ok := values[f.Path]; ok && a.State == ValuePresent {
+				m.materializeShorthand(f, v, a, rep)
+				continue
+			}
 			m.materialize(f.Type.Object, v.FieldByIndex(f.GoPath.Index), values, rep)
 		default:
 			m.materializeLeaf(f, v, values, rep)
@@ -348,6 +359,28 @@ func (m *Model) materializeUnion(f *FieldModel, v reflect.Value, values map[stri
 		Message:   fmt.Sprintf("unknown variant %q, want one of [%s]", tag, strings.Join(tags, ", ")),
 		Origin:    &a.Origin,
 	})
+}
+
+// materializeShorthand widens the scalar spelling of a [ScalarOr] field and
+// assigns the whole object.
+func (m *Model) materializeShorthand(f *FieldModel, v reflect.Value, a Assignment, rep *Report) {
+	if f.widen == nil {
+		rep.diag(f, &a.Origin, CodeSourceUnsupported, "cannot assign a value to an object")
+		return
+	}
+	value, err := f.widen(a.Value)
+	if err != nil {
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		return
+	}
+	if err := f.acc.set(v, value); err != nil {
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		return
+	}
+	rep.origins[f.Path] = a.Origin
+	if f.Meta.Secret {
+		rep.secrets[f.Path] = struct{}{}
+	}
 }
 
 func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[string]Assignment, rep *Report) {

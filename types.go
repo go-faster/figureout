@@ -65,6 +65,10 @@ type Type struct {
 	Key    *Type        // map key
 	Object *ObjectModel // object fields
 	Union  *Union       // union variants
+
+	// Scalar is the scalar spelling an object also accepts, as set by
+	// [ScalarOr]. It is nil for an object that is only ever written as one.
+	Scalar *Type
 }
 
 // UnitName names what a unit-scaled integer counts, for diagnostics and

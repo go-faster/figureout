@@ -87,6 +87,10 @@ type FieldModel struct {
 	// is only a path.
 	movedTo *FieldModel
 
+	// widen turns the scalar spelling of an object into the object, for a
+	// field registered with [ScalarOr].
+	widen func(any) (any, error)
+
 	acc accessor
 }
 

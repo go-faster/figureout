@@ -110,6 +110,7 @@ type registration struct {
 	object *ObjectModel
 	union  *Union
 	group  *container
+	widen  func(any) (any, error)
 }
 
 // container is one level of the configuration path.
@@ -382,6 +383,7 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 			Sources:     reg.sources,
 			Targets:     reg.targets,
 			MovedFrom:   reg.movedFrom,
+			widen:       reg.widen,
 			acc:         reg.acc,
 		}
 		if reg.object != nil {

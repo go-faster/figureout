@@ -475,6 +475,33 @@ backend:
   bucket: configs
 ```
 
+## A scalar, or an object
+
+`OneOf` cannot express "a scalar, or an object": a union needs a discriminator,
+and a bare scalar has nowhere to put one. Written by hand it is a `WithDecoder`
+plus `Shape` values that duplicate the descriptor already describing the same
+thing — and drift the moment a field is added to it. `ScalarOr` derives both:
+
+```go
+figureout.ScalarOr(s, &c.AuthToken, "auth_token", SecretDescriptor,
+	func(v string) Secret { return Secret{Value: v} })
+```
+
+```yaml
+auth_token: sk-live-...          # widened by the function
+auth_token: {file: /run/token}   # decoded by the descriptor
+```
+
+The accepted shapes come from the descriptor and from the scalar type, so they
+cannot drift from what the binder accepts: JSON Schema emits `oneOf` over the
+two, and a source with no object syntax — environment variables, mounted files —
+takes the scalar at the object's own name (`AUTH_TOKEN`), while its members
+still bind under it (`AUTH_TOKEN_FILE`).
+
+The two spellings never half-merge across layers. A widened scalar stands for
+the whole object, so whichever spelling a later layer uses replaces the other
+outright.
+
 ## Library choices
 
 **JSON uses `encoding/json`.** Its `Token` and `InputOffset` are exported, so
@@ -538,7 +565,10 @@ duplicate.
 ## Not yet implemented
 
 TOML and flag sources; CUE source and schema output; generated documentation;
-code generation; optimized unsafe accessors.
+code generation; optimized unsafe accessors. `ScalarOr` covers a field, not yet
+a list element: `projects: [group/docs]` alongside `[{ref: group/docs}]` still
+needs a decoder, because binding a whole object into a Go value from inside a
+list is a code path the tree binder does not have.
 
 ## Development
 

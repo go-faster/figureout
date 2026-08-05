@@ -194,6 +194,12 @@ func (g *generator) field(f *figureout.FieldModel) map[string]any {
 		doc = g.union(f)
 	case f.Type.Object != nil:
 		doc = g.object(f.Type.Object)
+		// A ScalarOr field is either spelling; the alternatives are derived
+		// from the descriptor and from the scalar type, so they cannot drift
+		// from what the binder accepts.
+		if scalar, ok := f.Shorthand(); ok {
+			doc = map[string]any{"oneOf": []any{g.typeSchema(scalar), doc}}
+		}
 	default:
 		doc = g.scalar(f)
 	}
