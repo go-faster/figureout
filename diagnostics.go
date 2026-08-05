@@ -41,6 +41,9 @@ const (
 	CodeConstraintMismatch  = "constraint.type_mismatch"
 	CodeDefaultMismatch     = "default.type_mismatch"
 	CodeUnionInvalid        = "union.invalid"
+	CodeDeprecated          = "field.deprecated"
+	CodeMovedConflict       = "field.moved_conflict"
+	CodeInvariantViolated   = "invariant.violated"
 	CodeValidatorNotExport  = "validator.not_exportable"
 )
 

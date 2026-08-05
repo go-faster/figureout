@@ -17,7 +17,7 @@ type FieldBuilder struct {
 	reg *registration
 }
 
-func (f *FieldBuilder) ok() bool { return f != nil && f.reg != nil && f.reg.goName != "" }
+func (f *FieldBuilder) ok() bool { return f != nil && f.reg != nil && f.reg.valid }
 
 func (f *FieldBuilder) constraint(c Constraint) *FieldBuilder {
 	if f.ok() {

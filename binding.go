@@ -42,22 +42,26 @@ type bound struct {
 // binder resolves field pointers taken inside a synthetic root value back to
 // reflection index paths.
 type binder struct {
-	root     reflect.Type
+	root reflect.Type
+	// goPath prefixes every discovered field, so a nested builder reports
+	// "Config.Server.Port" rather than "Server.Port".
+	goPath   string
 	base     uintptr
 	size     uintptr
 	byOffset map[uintptr][]bound
 	all      []bound
 }
 
-func newBinder(root reflect.Value) *binder {
+func newBinder(root reflect.Value, goPath string) *binder {
 	t := root.Type()
 	b := &binder{
 		root:     t,
+		goPath:   goPath,
 		base:     root.Addr().Pointer(),
 		size:     t.Size(),
 		byOffset: map[uintptr][]bound{},
 	}
-	b.walk(t, nil, t.Name(), 0)
+	b.walk(t, nil, goPath, 0)
 	for _, c := range b.all {
 		b.byOffset[c.offset] = append(b.byOffset[c.offset], c)
 	}
@@ -153,7 +157,7 @@ func (b *binder) resolve(ptr unsafe.Pointer, typ reflect.Type, name string) (bou
 
 // lookupPath resolves a dotted Go field path such as "Server.Port".
 func (b *binder) lookupPath(path string) (bound, error) {
-	want := b.root.Name() + "." + path
+	want := b.goPath + "." + path
 	for _, c := range b.all {
 		if c.goPath == want {
 			return c, nil

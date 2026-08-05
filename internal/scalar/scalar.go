@@ -6,6 +6,7 @@ package scalar
 
 import (
 	"encoding/base64"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -47,9 +48,9 @@ func ParseText(t figureout.Type, raw, sep string) (any, error) {
 		return convert(t.Go, reflect.ValueOf(raw))
 
 	case figureout.TypeDuration:
-		v, err := time.ParseDuration(raw)
+		v, err := ParseDuration(t, raw)
 		if err != nil {
-			return nil, errors.Errorf("invalid duration %q", raw)
+			return nil, err
 		}
 		return convert(t.Go, reflect.ValueOf(v))
 
@@ -73,6 +74,51 @@ func ParseText(t figureout.Type, raw, sep string) (any, error) {
 	default:
 		return nil, errors.Errorf("cannot represent a %s field as text", t.Kind)
 	}
+}
+
+// ParseDuration reads a duration written either as a Go duration string or, for
+// a field declaring a unit, as a bare number of that unit.
+//
+// Both spellings stay accepted so that migrating "timeout_seconds: 180" to
+// "timeout: 3m" is an alias change rather than a breaking one.
+func ParseDuration(t figureout.Type, raw string) (time.Duration, error) {
+	if t.Unit > 0 {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return ScaleUnit(t, n)
+		}
+		if f, err := strconv.ParseFloat(raw, 64); err == nil {
+			return ScaleUnitFloat(t, f)
+		}
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil {
+		if t.Unit > 0 {
+			return 0, errors.Errorf("invalid duration %q, want a number of %s or a duration such as \"1m30s\"",
+				raw, t.UnitName())
+		}
+		return 0, errors.Errorf("invalid duration %q", raw)
+	}
+	return v, nil
+}
+
+// ScaleUnit multiplies n by the type's unit, reporting overflow rather than
+// wrapping.
+func ScaleUnit(t figureout.Type, n int64) (time.Duration, error) {
+	d := time.Duration(n) * t.Unit
+	if n != 0 && d/t.Unit != time.Duration(n) {
+		return 0, errors.Errorf("%d %s overflows a duration", n, t.UnitName())
+	}
+	return d, nil
+}
+
+// ScaleUnitFloat multiplies a fractional count of the type's unit, truncating
+// to nanoseconds.
+func ScaleUnitFloat(t figureout.Type, f float64) (time.Duration, error) {
+	scaled := f * float64(t.Unit)
+	if scaled > math.MaxInt64 || scaled < math.MinInt64 {
+		return 0, errors.Errorf("%v %s overflows a duration", f, t.UnitName())
+	}
+	return time.Duration(scaled), nil
 }
 
 func parseInteger(want reflect.Type, raw string) (any, error) {

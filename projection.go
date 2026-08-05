@@ -111,7 +111,13 @@ func semanticShape(t Type) Shape {
 		return Shape{Kind: ShapeInteger}
 	case TypeNumber:
 		return Shape{Kind: ShapeNumber}
-	case TypeString, TypeBytes, TypeDuration, TypeTimestamp:
+	case TypeDuration:
+		// A unit-scaled duration is written as a count of its unit.
+		if t.Unit > 0 {
+			return Shape{Kind: ShapeInteger}
+		}
+		return Shape{Kind: ShapeString}
+	case TypeString, TypeBytes, TypeTimestamp:
 		return Shape{Kind: ShapeString}
 	case TypeList:
 		elem := semanticShape(*t.Elem)

@@ -105,12 +105,12 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 			continue
 		}
 
-		v, err := parse(e.field.Type, raw, separatorOf(e.field))
+		v, err := parse(e.typ, raw, separatorOf(e.field))
 		if err != nil {
 			layer.Diagnostics = append(layer.Diagnostics, figureout.Diagnostic{
 				Severity:  figureout.SeverityError,
 				Code:      figureout.CodeSourceUnsupported,
-				Message:   err.Error(),
+				Message:   figureout.Redact(e.field, err.Error(), raw),
 				FieldPath: e.path,
 				GoPath:    e.field.GoName,
 				Source:    Source,
@@ -138,6 +138,9 @@ type entry struct {
 	path  string
 	names []string
 	field *figureout.FieldModel
+	// typ is the semantic type to parse the text as. It differs from the
+	// field's own type for a ScalarOr shorthand.
+	typ figureout.Type
 	// discriminator marks a union tag rather than a semantic value.
 	discriminator bool
 }
@@ -176,6 +179,7 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 				path:          path,
 				names:         p.source.names(f, append(slices.Clone(own), f.Type.Union.Discriminator)),
 				field:         f,
+				typ:           f.Type,
 				discriminator: true,
 			})
 			// A variant's members are siblings of the tag, so they share the
@@ -184,9 +188,15 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 				p.object(variant.Object, own)
 			}
 		case f.Type.Object != nil:
+			// An object has no spelling here, so a ScalarOr field binds its
+			// scalar alternative at the object's own name; its members still
+			// bind under it.
+			if scalar, ok := f.Shorthand(); ok {
+				p.add(entry{path: f.Path, names: p.source.names(f, own), field: f, typ: scalar})
+			}
 			p.object(f.Type.Object, own)
 		default:
-			p.add(entry{path: f.Path, names: p.source.names(f, own), field: f})
+			p.add(entry{path: f.Path, names: p.source.names(f, own), field: f, typ: f.Type})
 		}
 	}
 }

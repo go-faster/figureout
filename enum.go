@@ -70,7 +70,7 @@ func registerEnum[R, T any](
 ) *ValueField[T] {
 	b := s.b
 	reg := b.register(ptr, carrier, name, regField)
-	if reg.goName != "" {
+	if reg.valid {
 		if len(values) == 0 {
 			b.diags.errorf(CodeConstraintMismatch, reg.goName, name, "enum has no values")
 		} else {

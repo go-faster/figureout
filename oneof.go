@@ -85,7 +85,7 @@ func Variant[V any](tag string, field **V, d *Descriptor[V]) UnionOption {
 func OneOf[R, C any](s *Schema[R], field *C, name string, opts ...UnionOption) *UnionField {
 	b := s.b
 	reg := b.register(unsafe.Pointer(field), reflect.TypeFor[C](), name, regUnion)
-	if reg.goName == "" {
+	if !reg.valid {
 		return &UnionField{&FieldBuilder{b: b, reg: reg}}
 	}
 

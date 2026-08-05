@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"strconv"
+	"time"
 
 	"github.com/go-faster/errors"
 
@@ -55,9 +56,17 @@ func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureou
 		return convert(t.Go, reflect.ValueOf(s))
 
 	case figureout.TypeDuration, figureout.TypeTimestamp, figureout.TypeBytes:
-		// These are strings on the wire in every JSON dialect.
+		// These are strings on the wire in every JSON dialect, except a
+		// duration declaring a unit, whose canonical spelling is a number.
+		if num, ok := n.Value.(json.Number); ok && t.Kind == figureout.TypeDuration && t.Unit > 0 {
+			return d.scaled(t, num)
+		}
 		s, ok := n.Value.(string)
 		if !ok {
+			if t.Kind == figureout.TypeDuration && t.Unit > 0 {
+				return nil, errors.Errorf("want a number of %s or a duration string, got %s",
+					t.UnitName(), n.Tag)
+			}
 			return nil, errors.Errorf("want a string, got %s", n.Tag)
 		}
 		return scalar.ParseText(t, s, "")
@@ -65,6 +74,27 @@ func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureou
 	default:
 		return nil, errors.Errorf("cannot decode a %s from JSON", t.Kind)
 	}
+}
+
+// scaled reads a JSON number as a count of the field's declared unit.
+func (decoder) scaled(t figureout.Type, num json.Number) (any, error) {
+	var (
+		d   time.Duration
+		err error
+	)
+	if n, intErr := num.Int64(); intErr == nil {
+		d, err = scalar.ScaleUnit(t, n)
+	} else {
+		f, floatErr := num.Float64()
+		if floatErr != nil {
+			return nil, errors.Errorf("invalid number %q", num)
+		}
+		d, err = scalar.ScaleUnitFloat(t, f)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return convert(t.Go, reflect.ValueOf(d))
 }
 
 // fromString accepts a JSON string for a non-string field, but only when the

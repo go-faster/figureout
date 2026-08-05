@@ -78,11 +78,15 @@ const (
 	regObject
 	regUnion
 	regIgnore
+	regGroup
 )
 
 // registration is one recorded declaration, before compilation.
 type registration struct {
-	kind   regKind
+	kind regKind
+	// valid is false once the declaration has been reported as broken; the
+	// fluent builder then turns into a no-op instead of panicking.
+	valid  bool
 	name   string
 	goName string
 	bound  bound
@@ -93,6 +97,7 @@ type registration struct {
 	meta        Metadata
 	def         *Default
 	merge       MergePolicy
+	movedFrom   []string
 	constraints []Constraint
 	sources     map[SourceID]*SourceProjection
 	targets     map[TargetID][]any
@@ -101,19 +106,58 @@ type registration struct {
 	recursive bool
 	reason    string
 
-	// Object and union payloads.
+	// Object, union and group payloads.
 	object *ObjectModel
 	union  *Union
+	group  *container
+	widen  func(any) (any, error)
 }
 
-// builder accumulates registrations for one descriptor.
+// container is one level of the configuration path.
+//
+// Every registration in a container binds a Go field of the same struct: a
+// [Group] opens a path level without opening a Go one, so its members stay
+// relative to the builder root and the synthetic object field that carries them
+// has an empty Go index.
+type container struct {
+	regs []*registration
+}
+
+// builder accumulates registrations for one struct.
+//
+// A nested [ObjectFunc] gets its own builder rooted at the nested value, so
+// pointer binding, completeness and name collisions are all scoped to the
+// struct that declares them, exactly as they are for a separate [Derive].
 type builder struct {
 	rootType reflect.Type
 	root     reflect.Value
+	goPath   string
 	bind     *binder
-	regs     []*registration
-	diags    Diagnostics
-	opts     schemaOptions
+	// stack is the open containers, outermost first. It always holds at least
+	// the root container.
+	stack      []*container
+	invariants []invariant
+	diags      Diagnostics
+	opts       schemaOptions
+}
+
+// newBuilder starts a builder over an addressable struct value. goPath prefixes
+// the Go paths reported in diagnostics.
+func newBuilder(root reflect.Value, goPath string, opts schemaOptions) *builder {
+	return &builder{
+		rootType: root.Type(),
+		root:     root,
+		goPath:   goPath,
+		bind:     newBinder(root, goPath),
+		stack:    []*container{{}},
+		opts:     opts,
+	}
+}
+
+// add records a declaration in the innermost open container.
+func (b *builder) add(reg *registration) {
+	c := b.stack[len(b.stack)-1]
+	c.regs = append(c.regs, reg)
 }
 
 // Schema is the mutable registration builder for T.
@@ -151,25 +195,36 @@ func Derive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) (*Descri
 		return nil, errors.Errorf("configuration type must be a struct, got %s", rv.Type())
 	}
 
-	b := &builder{
-		rootType: rv.Type(),
-		root:     rv,
-		bind:     newBinder(rv),
-		opts:     options,
-	}
+	b := newBuilder(rv, rv.Type().Name(), options)
 	describe(root, &Schema[T]{b: b})
 	runtime.KeepAlive(root)
 
-	model, diags := b.compile()
-	if err := diags.Err(); err != nil {
+	obj := b.compile()
+	if err := b.diags.Err(); err != nil {
 		return nil, err
 	}
-	return &Descriptor[T]{model: model}, nil
+
+	model := &Model{Root: obj}
+	for _, inv := range b.invariants {
+		model.invariants = append(model.invariants, InvariantModel{Name: inv.name})
+	}
+	prefixPaths(obj, "")
+	model.reindex()
+	return &Descriptor[T]{model: model, invariants: b.invariants}, nil
 }
 
 // MustDerive is like [Derive] but panics on error.
 //
 // The panic message contains every compilation diagnostic, not only the first.
+//
+// A failed derivation is a programming error, so a package-level
+// "var ConfigDescriptor = figureout.MustDerive(...)" is the intended idiom for
+// a library. A binary that would rather report the failure than crash in init
+// should derive inside its own loader instead:
+//
+//	var descriptor = sync.OnceValues(func() (*figureout.Descriptor[Config], error) {
+//		return figureout.Derive(describe)
+//	})
 func MustDerive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) *Descriptor[T] {
 	d, err := Derive(describe, opts...)
 	if err != nil {
@@ -204,7 +259,8 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 	reg.acc.elem = elem
 
 	if kind == regIgnore {
-		b.regs = append(b.regs, reg)
+		reg.valid = true
+		b.add(reg)
 		return reg
 	}
 
@@ -225,7 +281,8 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 		r.apply(reg)
 	}
 
-	b.regs = append(b.regs, reg)
+	reg.valid = true
+	b.add(reg)
 	return reg
 }
 
@@ -251,20 +308,52 @@ func (b *builder) applyOptions(reg *registration, opts []FieldOption) {
 	}
 }
 
-// compile runs the validation phases and produces the model.
-func (b *builder) compile() (*Model, Diagnostics) {
-	diags := b.diags
-
-	root := &ObjectModel{Go: b.rootType}
+// compile runs the validation phases and produces the object model for the
+// struct this builder describes. Diagnostics accumulate on the builder.
+func (b *builder) compile() *ObjectModel {
 	handled := map[string]*registration{}
+	root := b.compileContainer(b.stack[0], handled)
+	b.checkCompleteness(handled)
+	b.placeMoved(root)
+	return root
+}
+
+// compileContainer turns one path level into an object model. handled is shared
+// across the whole builder, because completeness and duplicate-registration
+// checks are about Go fields, which a group does not nest.
+func (b *builder) compileContainer(c *container, handled map[string]*registration) *ObjectModel {
+	root := &ObjectModel{Go: b.rootType}
 	byName := map[string]*registration{}
 
-	for _, reg := range b.regs {
-		if reg.goName == "" {
+	for _, reg := range c.regs {
+		if !reg.valid {
 			continue // already reported
 		}
+		if reg.kind == regGroup {
+			if prev, ok := byName[reg.name]; ok {
+				b.diags.errorf(CodeDuplicateName, reg.goName, reg.name,
+					"configuration property %q is bound to both %s and a group", reg.name, prev.goName)
+				continue
+			}
+			byName[reg.name] = reg
+			root.Fields = append(root.Fields, &FieldModel{
+				Name:     reg.name,
+				Path:     reg.name,
+				GoName:   b.goPath,
+				Presence: PresenceRequired,
+				Meta:     reg.meta,
+				Targets:  reg.targets,
+				Sources:  reg.sources,
+				Type: Type{
+					Kind:   TypeObject,
+					Go:     b.rootType,
+					Object: b.compileContainer(reg.group, handled),
+				},
+			})
+			continue
+		}
 		if prev, ok := handled[reg.goName]; ok {
-			diags.errorf(CodeDuplicateField, reg.goName, reg.name,
+			b.diags.errorf(CodeDuplicateField, reg.goName, reg.name,
 				"%s is registered more than once: %q and %q", reg.goName, prev.name, reg.name)
 			continue
 		}
@@ -274,7 +363,7 @@ func (b *builder) compile() (*Model, Diagnostics) {
 			continue
 		}
 		if prev, ok := byName[reg.name]; ok {
-			diags.errorf(CodeDuplicateName, reg.goName, reg.name,
+			b.diags.errorf(CodeDuplicateName, reg.goName, reg.name,
 				"configuration property %q is bound to both %s and %s", reg.name, prev.goName, reg.goName)
 			continue
 		}
@@ -293,6 +382,8 @@ func (b *builder) compile() (*Model, Diagnostics) {
 			Constraints: reg.constraints,
 			Sources:     reg.sources,
 			Targets:     reg.targets,
+			MovedFrom:   reg.movedFrom,
+			widen:       reg.widen,
 			acc:         reg.acc,
 		}
 		if reg.object != nil {
@@ -301,16 +392,10 @@ func (b *builder) compile() (*Model, Diagnostics) {
 		if reg.union != nil {
 			f.Type.Union = reg.union
 		}
-		b.validateField(f, &diags)
+		b.validateField(f)
 		root.Fields = append(root.Fields, f)
 	}
-
-	b.checkCompleteness(handled, &diags)
-
-	model := &Model{Root: root}
-	prefixPaths(root, "")
-	model.reindex()
-	return model, diags
+	return root
 }
 
 // prefixPaths assigns canonical dotted paths to nested fields.
@@ -329,32 +414,32 @@ func prefixPaths(o *ObjectModel, prefix string) {
 }
 
 // validateField checks constraints and defaults against the semantic type.
-func (b *builder) validateField(f *FieldModel, diags *Diagnostics) {
+func (b *builder) validateField(f *FieldModel) {
 	for _, c := range f.Constraints {
 		if !c.Applies(f.Type.Kind) {
-			diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
+			b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
 				"constraint %q does not apply to a %s field", c.Kind(), f.Type.Kind)
 		}
 	}
 	if f.Default != nil && f.Default.Value != nil {
 		dt := reflect.TypeOf(f.Default.Value)
 		if !dt.AssignableTo(f.Type.Go) && !dt.ConvertibleTo(f.Type.Go) {
-			diags.errorf(CodeDefaultMismatch, f.GoName, f.Name,
+			b.diags.errorf(CodeDefaultMismatch, f.GoName, f.Name,
 				"default of type %s is not assignable to %s", dt, f.Type.Go)
 		}
 	}
 	if !f.Merge.Applies(f.Type.Kind) {
-		diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
+		b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
 			"merge policy %q does not apply to a %s field", f.Merge, f.Type.Kind)
 	}
 	if !f.acc.settable {
-		diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
+		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
 			"%s is unexported and cannot be assigned; ignore it instead", f.GoName)
 	}
 }
 
 // checkCompleteness verifies that every eligible field is accounted for.
-func (b *builder) checkCompleteness(handled map[string]*registration, diags *Diagnostics) {
+func (b *builder) checkCompleteness(handled map[string]*registration) {
 	if b.opts.completeness == CompletenessDisabled {
 		return
 	}
@@ -390,7 +475,7 @@ func (b *builder) checkCompleteness(handled map[string]*registration, diags *Dia
 				check(b.bind.children(f.index))
 				continue
 			}
-			diags.errorf(CodeMissingDefinition, f.goPath, "",
+			b.diags.errorf(CodeMissingDefinition, f.goPath, "",
 				"%s is neither registered nor explicitly ignored", f.goPath)
 		}
 	}

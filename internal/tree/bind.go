@@ -80,6 +80,12 @@ func (b Binder) object(
 			b.union(layer, f, child, docPath)
 		case f.Type.Object != nil:
 			if child.Kind != Object {
+				// A ScalarOr field accepts its scalar spelling here; the core
+				// widens it into the object.
+				if short, ok := f.Shorthand(); ok {
+					b.shorthand(layer, f, short, child, docPath, pos)
+					continue
+				}
 				b.errorf(layer, f.Path, child.Pos, figureout.CodeSourceUnsupported,
 					"%s must be an object, got %s", docPath, child.Kind)
 				continue
@@ -177,6 +183,35 @@ func (b Binder) union(layer *figureout.Layer, f *figureout.FieldModel, node *Nod
 		"unknown variant %q, want one of [%s]", tag, strings.Join(tags, ", "))
 }
 
+// shorthand binds the scalar spelling of an object field.
+func (b Binder) shorthand(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	short figureout.Type,
+	node *Node,
+	docPath string,
+	pos Pos,
+) {
+	origin := b.origin(docPath, pos)
+	if node.Kind == Null {
+		if !b.AllowNull {
+			b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(f.Path, origin)
+		return
+	}
+
+	v, err := b.value(short, node, acceptsOf(f, b.Source))
+	if err != nil {
+		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
+		return
+	}
+	layer.Set(f.Path, v, origin)
+}
+
 func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node, docPath string, pos Pos) {
 	origin := b.origin(docPath, pos)
 
@@ -192,7 +227,10 @@ func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node
 
 	v, err := b.value(f.Type, node, acceptsOf(f, b.Source))
 	if err != nil {
-		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s", err)
+		// A decoding failure quotes what it could not read, which for a secret
+		// field is the secret itself.
+		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
 		return
 	}
 	layer.Set(f.Path, v, origin)

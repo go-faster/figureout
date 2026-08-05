@@ -8,8 +8,8 @@ declaration.
 go get github.com/go-faster/figureout
 ```
 
-The core, three sources (JSON, YAML, environment variables) and one target
-(JSON Schema), wired end to end.
+The core, four sources (JSON, YAML, environment variables, mounted files) and
+one target (JSON Schema), wired end to end.
 
 ```go
 type Config struct {
@@ -65,14 +65,50 @@ provenance:
   server.timeout       yaml server.timeout examples/service/config.yaml:10:3
 ```
 
+## Deriving a descriptor
+
+`Derive` compiles the whole model before returning, so every mistake in a
+description — a mistyped registration, a duplicate name, an unregistered field —
+surfaces at once, as diagnostics. `MustDerive` turns them into a panic carrying
+the same list.
+
+Which one to use is a question of *where the failure should appear*, and the
+answer differs by program shape:
+
+```go
+// A library: a broken descriptor is a programming error, and a panic in init
+// is the right way to report one. This is the idiom the examples use.
+var ConfigDescriptor = figureout.MustDerive(describe)
+
+// A service: derive once, on the path that can report an error and exit 1.
+var descriptor = sync.OnceValues(func() (*figureout.Descriptor[Config], error) {
+	return figureout.Derive(describe)
+})
+
+func Load(paths ...string) (Config, *figureout.Report, error) {
+	d, err := descriptor()
+	if err != nil {
+		return Config{}, nil, errors.Wrap(err, "descriptor")
+	}
+	return d.Resolve(yaml.File(paths[0]), env.Current(env.Prefix("APP_")))
+}
+```
+
+`sync.OnceValues` keeps the compile-once property of a package variable while
+moving the failure into `main`, where it prints as a configuration error rather
+than as a crash. For a descriptor with a few hundred registrations that
+difference is worth the four extra lines; below that, the package variable is
+fine either way.
+
 ## Packages
 
 | Package | Contents |
 | --- | --- |
-| `figureout` | descriptor, builder, pointer binding, completeness, constraints, enums, unions, carriers, diagnostics, resolution |
+| `figureout` | descriptor, builder, pointer binding, completeness, constraints, invariants, enums, unions, carriers, secrets, diagnostics, resolution |
 | `figureout/source/json` | JSON source, with file:line:column provenance |
 | `figureout/source/yaml` | YAML source, tag-aware, anchors resolved |
 | `figureout/source/env` | environment variable source |
+| `figureout/source/file` | one value per file, for mounted secrets |
 | `figureout/schema/jsonschema` | JSON Schema target |
 
 ## Sources
@@ -132,6 +168,59 @@ env.Current(env.Names(func(f *figureout.FieldModel, segments []string) []string 
 Whatever the naming produces is still collision-checked, so a function that
 flattens away a level is reported rather than silently binding two fields to
 one variable.
+
+## Nesting
+
+A nested object is either its own descriptor or an inline description:
+
+```go
+figureout.Object(s, &c.Server, "server", ServerDescriptor)  // shared or exported
+
+figureout.ObjectFunc(s, &c.Server, "server", func(c *Server, s *figureout.Schema[Server]) {
+	figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT")).InRange(1, 65535)
+})
+```
+
+`ObjectFunc` runs `describe` against a nested `Schema` rooted at the field, so
+pointer binding, completeness and name collisions are scoped to `Server`
+exactly as a separate `Derive` would scope them — including `env.Name`, which
+still replaces only that field's segment and reads `SERVER_LISTEN_PORT`. A
+pointer that leaves the nested struct is a foreign-pointer diagnostic rather
+than a silent binding.
+
+Use `Object` for a descriptor several parents share or that you want to export,
+and `ObjectFunc` for a section with exactly one parent — which is most of them.
+
+**The configuration path is not welded to the Go nesting.** The shape that reads
+well in a file and the shape consumers want in Go are rarely the same shape, and
+a configuration that has been around a while has both mismatches. `Group` opens
+a path level with no Go struct behind it:
+
+```go
+figureout.Group(s, "webhook", func(s *figureout.Schema[GitLab]) {
+	figureout.Value(s, &c.WebhookEnabled, "enabled").ApplyDefault(false)
+	figureout.Value(s, &c.WebhookSecret, "secret", figureout.Hidden())
+})
+```
+
+```yaml
+webhook:
+  enabled: true
+  secret: hunter2      # GITLAB_WEBHOOK_SECRET
+```
+
+Only the path nests. The fields still bind to the declaring struct, so
+completeness and duplicate registration see exactly what they would have seen
+without the group — registering the same field inside and outside one is still
+a duplicate. A group contributes a segment everywhere a nested object would:
+environment variable names, provenance paths and generated schemas.
+
+The inverse mismatch — a nested Go struct that is flat in the file — needs no
+function, because registering descendants already covers the parent:
+
+```go
+figureout.Value(s, &c.Database.DSN, "dsn")   // Config.Database.DSN, spelled "dsn"
+```
 
 ## Presence
 
@@ -206,6 +295,139 @@ when that schema describes what a source accepts, and only where erasing
 leaves something to fall back on — `jsonschema.ForSource(...)` emits it,
 `jsonschema.Semantic()` never does.
 
+## Durations and units
+
+Unit-suffixed integer keys outlive the configurations that introduced them.
+Moving `timeout_seconds` onto `time.Duration` normally changes what the key
+accepts — `180` would have to become `"180s"` — which breaks every deployment
+already running. `Unit` keeps the key and still resolves a `time.Duration`:
+
+```go
+figureout.Value(s, &c.Timeout, "timeout_seconds", figureout.Unit(time.Second)).
+	AtLeast(time.Second).
+	AtMost(10 * time.Minute)
+```
+
+```yaml
+timeout_seconds: 180     # 180 * time.Second
+timeout_seconds: "3m"    # still accepted
+```
+
+Constraints stay typed as `time.Duration`, so the bound reads `AtLeast(time.Second)`
+rather than `AtLeast(1)`. The generated schema describes the canonical form —
+`{"type": "integer", "minimum": 1, "description": "… In seconds."}` — because
+that is what the key is actually written as. Durations without a unit stay
+strings, with their defaults and bounds spelled the way a source accepts them.
+
+Because the duration spelling keeps working, migrating away is two safe steps:
+add the unit, then add the duration-spelled key and deprecate the old one.
+
+## Secrets
+
+`Hidden` is documentation metadata and does nothing else, which leaves a token
+one `Pattern` or `MinLength` failure away from a log. `Secret` has teeth:
+
+```go
+figureout.Value(s, &c.Token, "token", figureout.Secret()).Pattern(`^sk-[a-z0-9]+$`)
+```
+
+```text
+token: must match "^sk-[a-z0-9]+$"     # never "value: hunter2"
+  source: config.yaml:3:8
+```
+
+A secret's value never appears in a message the library formats — not in a
+constraint failure, not in a decoding error from a source. `Secret` implies
+`Hidden`, and JSON Schema marks the property `writeOnly`. `report.Secret(path)`
+and `report.Secrets()` let a consumer walking `report.Origins()` apply the same
+rule to its own logging.
+
+**Where a secret comes from is a deliberate choice.** figureout owns the two
+mechanisms an operator actually deploys, and neither is a value-level
+indirection written into the configuration file:
+
+| | |
+| --- | --- |
+| an environment variable | `env.Current(env.Prefix("APP_"))` binds `database.dsn` to `APP_DATABASE_DSN` directly |
+| a mounted file | `file.Dir("/run/secrets")` reads `database.dsn` from a file of that name |
+
+`source/file` is the shape a Kubernetes secret mount, a Docker secret and
+systemd's `LoadCredential` all present: a directory whose entries are named
+after the values they hold. One trailing newline is stripped, so a secret
+written with `echo` reads back as written; a missing file leaves the field to
+earlier layers. Names compose exactly as env's do, and `file.Names` replaces the
+derivation wholesale.
+
+An in-document `{value, env, file}` carrier is deliberately **not** provided.
+Its `env:` half is redundant — the env source already binds the field directly,
+which is strictly better than an indirection the file has to spell — and its
+`file:` half is `source/file` with the mapping written out by hand. If a
+configuration must keep that shape for compatibility, it is a `WithDecoder`
+plus the shapes it accepts, not something the core owns.
+
+## Cross-field invariants
+
+Constraints are per field; real configurations are full of rules that are not.
+`Invariant` gives them somewhere to live that keeps the provenance the
+descriptor already has:
+
+```go
+figureout.Invariant(s, "proxy-exists", func(c *Config) error {
+	for i, site := range c.Fetch.Sites {
+		if _, ok := c.Proxies[site.Proxy]; !ok {
+			return figureout.At(fmt.Sprintf("fetch.sites[%d].proxy", i)).
+				Errorf("no proxy named %q is configured", site.Proxy)
+		}
+	}
+	return nil
+})
+```
+
+```text
+fetch.sites[0].proxy: no proxy named "gitlab" is configured
+  source: config.yaml:41:5
+```
+
+Invariants run last, on a configuration whose every field already resolved and
+validated, so a violation is never a knock-on effect of an error already
+reported. `At` attaches the paths a rule is about — an element path resolves to
+its nearest field for provenance — and `errors.Join` reports several violations
+as several diagnostics. A plain `error` works too, without a path.
+
+A rule is a Go function, so no target can emit it; `model.Invariants()` lists
+the names so generated documentation can say a rule exists that the schema does
+not describe.
+
+## Deprecating and moving a key
+
+`Deprecated` is metadata, and metadata alone tells an operator nothing. Setting
+a deprecated key now lands a `SeverityWarning` in `report.Diagnostics`, with the
+origin that set it, so a binary can say "you are using a key that is going away"
+and still start.
+
+`MovedFrom` is the behavior a configuration needs while it is being reshaped:
+
+```go
+figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
+	figureout.Value(s, &c.HTTPAddr, "http_addr",
+		figureout.MovedFrom("http_addr", "legacy.addr"))
+})
+```
+
+- the old spelling still resolves, with a warning naming both paths
+- setting **both** spellings is an error, not a precedence rule — two spellings
+  in one configuration are two intentions, and silently picking one is the worst
+  available answer. `report.OriginOf` answers "was this set?" correctly, so
+  setting the new key explicitly to its default value alongside the old one is
+  caught too
+- the old path appears in generated schemas as a deprecated property, never as
+  a second field; a level that no longer exists is rebuilt as a deprecated
+  object, so old nesting keeps parsing
+
+The path is relative to the declaring descriptor, so it can name a former level.
+A former path that runs through a nested descriptor rather than a group is
+reported at derivation, because that descriptor may be shared.
+
 ## Enum and OneOf
 
 The two are separate concepts, and the API keeps them apart.
@@ -252,6 +474,33 @@ backend:
   type: s3
   bucket: configs
 ```
+
+## A scalar, or an object
+
+`OneOf` cannot express "a scalar, or an object": a union needs a discriminator,
+and a bare scalar has nowhere to put one. Written by hand it is a `WithDecoder`
+plus `Shape` values that duplicate the descriptor already describing the same
+thing — and drift the moment a field is added to it. `ScalarOr` derives both:
+
+```go
+figureout.ScalarOr(s, &c.AuthToken, "auth_token", SecretDescriptor,
+	func(v string) Secret { return Secret{Value: v} })
+```
+
+```yaml
+auth_token: sk-live-...          # widened by the function
+auth_token: {file: /run/token}   # decoded by the descriptor
+```
+
+The accepted shapes come from the descriptor and from the scalar type, so they
+cannot drift from what the binder accepts: JSON Schema emits `oneOf` over the
+two, and a source with no object syntax — environment variables, mounted files —
+takes the scalar at the object's own name (`AUTH_TOKEN`), while its members
+still bind under it (`AUTH_TOKEN_FILE`).
+
+The two spellings never half-merge across layers. A widened scalar stands for
+the whole object, so whichever spelling a later layer uses replaces the other
+outright.
 
 ## Library choices
 
@@ -316,7 +565,10 @@ duplicate.
 ## Not yet implemented
 
 TOML and flag sources; CUE source and schema output; generated documentation;
-code generation; optimized unsafe accessors.
+code generation; optimized unsafe accessors. `ScalarOr` covers a field, not yet
+a list element: `projects: [group/docs]` alongside `[{ref: group/docs}]` still
+needs a decoder, because binding a whole object into a Go value from inside a
+list is a code path the tree binder does not have.
 
 ## Development
 

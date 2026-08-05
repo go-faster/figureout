@@ -96,6 +96,7 @@ type Report struct {
 
 	origins map[string]Origin
 	erased  map[string]Origin
+	secrets map[string]struct{}
 }
 
 // OriginOf returns where the value at the canonical path came from.
@@ -144,7 +145,11 @@ func (d *Descriptor[T]) Resolve(sources ...Source) (T, *Report, error) {
 // ResolveContext is [Descriptor.Resolve] with a context.
 func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (T, *Report, error) {
 	var cfg T
-	rep := &Report{origins: map[string]Origin{}, erased: map[string]Origin{}}
+	rep := &Report{
+		origins: map[string]Origin{},
+		erased:  map[string]Origin{},
+		secrets: map[string]struct{}{},
+	}
 
 	state := map[string]*merged{}
 	for _, src := range sources {
@@ -161,6 +166,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		rep.Diagnostics = append(rep.Diagnostics, layer.Diagnostics...)
 		d.model.fold(state, layer, rep)
 	}
+	d.model.applyMoved(state, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		return cfg, rep, err
 	}
@@ -181,6 +187,14 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		var zero T
 		return zero, rep, err
 	}
+
+	// Cross-field rules run last, on a configuration whose every field already
+	// resolved and validated, so a violation is never a knock-on effect.
+	d.checkInvariants(rv, rep)
+	if err := rep.Diagnostics.Err(); err != nil {
+		var zero T
+		return zero, rep, err
+	}
 	return cfg, rep, nil
 }
 
@@ -197,6 +211,11 @@ func (m *Model) fold(state map[string]*merged, layer *Layer, rep *Report) {
 		if found, ok := m.FieldByPath(a.Path); ok {
 			f, policy = found, found.Merge
 		}
+
+		// A [ScalarOr] field written both ways does not merge: the two
+		// spellings describe the same value, so the later one replaces the
+		// other outright rather than half-filling an object.
+		m.dropOtherSpelling(state, a.Path)
 
 		st, ok := state[a.Path]
 		if !ok {
@@ -250,6 +269,9 @@ func (m *Model) lookup(root reflect.Value, path string) (*FieldModel, reflect.Va
 			return nil, reflect.Value{}, false
 		}
 		if !nested {
+			if f.movedTo != nil {
+				return nil, reflect.Value{}, false
+			}
 			return f, v, true
 		}
 		switch {
@@ -281,10 +303,21 @@ func selectedVariant(f *FieldModel, v reflect.Value) (*VariantModel, reflect.Val
 
 func (m *Model) materialize(o *ObjectModel, v reflect.Value, values map[string]Assignment, rep *Report) {
 	for _, f := range o.Fields {
+		if f.movedTo != nil {
+			// A former spelling never reaches the Go value: applyMoved has
+			// already redirected whatever it carried.
+			continue
+		}
 		switch {
 		case f.Type.Union != nil:
 			m.materializeUnion(f, v, values, rep)
 		case f.Type.Object != nil:
+			// A [ScalarOr] field written as a scalar carries a value of its
+			// own, which stands for the whole object.
+			if a, ok := values[f.Path]; ok && a.State == ValuePresent {
+				m.materializeShorthand(f, v, a, rep)
+				continue
+			}
 			m.materialize(f.Type.Object, v.FieldByIndex(f.GoPath.Index), values, rep)
 		default:
 			m.materializeLeaf(f, v, values, rep)
@@ -328,6 +361,28 @@ func (m *Model) materializeUnion(f *FieldModel, v reflect.Value, values map[stri
 	})
 }
 
+// materializeShorthand widens the scalar spelling of a [ScalarOr] field and
+// assigns the whole object.
+func (m *Model) materializeShorthand(f *FieldModel, v reflect.Value, a Assignment, rep *Report) {
+	if f.widen == nil {
+		rep.diag(f, &a.Origin, CodeSourceUnsupported, "cannot assign a value to an object")
+		return
+	}
+	value, err := f.widen(a.Value)
+	if err != nil {
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		return
+	}
+	if err := f.acc.set(v, value); err != nil {
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		return
+	}
+	rep.origins[f.Path] = a.Origin
+	if f.Meta.Secret {
+		rep.secrets[f.Path] = struct{}{}
+	}
+}
+
 func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[string]Assignment, rep *Report) {
 	a, ok := values[f.Path]
 	if !ok || a.State == ValueMissing {
@@ -337,18 +392,34 @@ func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[strin
 
 	value, err := convertValue(f.Type.Go, a.Value)
 	if err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
 		return
 	}
 	if err := f.Validate(value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
 		return
 	}
 	if err := f.acc.set(v, value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
 		return
 	}
 	rep.origins[f.Path] = a.Origin
+	if f.Meta.Secret {
+		rep.secrets[f.Path] = struct{}{}
+	}
+
+	// Deprecation is worth nothing to an operator unless using the key says so.
+	if f.Meta.Deprecated != "" {
+		origin := a.Origin
+		rep.Diagnostics = append(rep.Diagnostics, Diagnostic{
+			Severity:  SeverityWarning,
+			Code:      CodeDeprecated,
+			Message:   f.Meta.Deprecated,
+			FieldPath: f.Path,
+			GoPath:    f.GoName,
+			Origin:    &origin,
+		})
+	}
 }
 
 func (m *Model) applyDefault(f *FieldModel, v reflect.Value, rep *Report) {
@@ -363,6 +434,9 @@ func (m *Model) applyDefault(f *FieldModel, v reflect.Value, rep *Report) {
 			return
 		}
 		rep.origins[f.Path] = Origin{Source: "default"}
+		if f.Meta.Secret {
+			rep.secrets[f.Path] = struct{}{}
+		}
 		return
 	}
 	if f.Presence == PresenceRequired {
