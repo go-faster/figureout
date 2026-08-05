@@ -106,7 +106,11 @@ type registration struct {
 	union  *Union
 }
 
-// builder accumulates registrations for one descriptor.
+// builder accumulates registrations for one struct.
+//
+// A nested [ObjectFunc] gets its own builder rooted at the nested value, so
+// pointer binding, completeness and name collisions are all scoped to the
+// struct that declares them, exactly as they are for a separate [Derive].
 type builder struct {
 	rootType reflect.Type
 	root     reflect.Value
@@ -114,6 +118,17 @@ type builder struct {
 	regs     []*registration
 	diags    Diagnostics
 	opts     schemaOptions
+}
+
+// newBuilder starts a builder over an addressable struct value. goPath prefixes
+// the Go paths reported in diagnostics.
+func newBuilder(root reflect.Value, goPath string, opts schemaOptions) *builder {
+	return &builder{
+		rootType: root.Type(),
+		root:     root,
+		bind:     newBinder(root, goPath),
+		opts:     opts,
+	}
 }
 
 // Schema is the mutable registration builder for T.
@@ -151,19 +166,18 @@ func Derive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) (*Descri
 		return nil, errors.Errorf("configuration type must be a struct, got %s", rv.Type())
 	}
 
-	b := &builder{
-		rootType: rv.Type(),
-		root:     rv,
-		bind:     newBinder(rv),
-		opts:     options,
-	}
+	b := newBuilder(rv, rv.Type().Name(), options)
 	describe(root, &Schema[T]{b: b})
 	runtime.KeepAlive(root)
 
-	model, diags := b.compile()
-	if err := diags.Err(); err != nil {
+	obj := b.compile()
+	if err := b.diags.Err(); err != nil {
 		return nil, err
 	}
+
+	model := &Model{Root: obj}
+	prefixPaths(obj, "")
+	model.reindex()
 	return &Descriptor[T]{model: model}, nil
 }
 
@@ -260,10 +274,9 @@ func (b *builder) applyOptions(reg *registration, opts []FieldOption) {
 	}
 }
 
-// compile runs the validation phases and produces the model.
-func (b *builder) compile() (*Model, Diagnostics) {
-	diags := b.diags
-
+// compile runs the validation phases and produces the object model for the
+// struct this builder describes. Diagnostics accumulate on the builder.
+func (b *builder) compile() *ObjectModel {
 	root := &ObjectModel{Go: b.rootType}
 	handled := map[string]*registration{}
 	byName := map[string]*registration{}
@@ -273,7 +286,7 @@ func (b *builder) compile() (*Model, Diagnostics) {
 			continue // already reported
 		}
 		if prev, ok := handled[reg.goName]; ok {
-			diags.errorf(CodeDuplicateField, reg.goName, reg.name,
+			b.diags.errorf(CodeDuplicateField, reg.goName, reg.name,
 				"%s is registered more than once: %q and %q", reg.goName, prev.name, reg.name)
 			continue
 		}
@@ -283,7 +296,7 @@ func (b *builder) compile() (*Model, Diagnostics) {
 			continue
 		}
 		if prev, ok := byName[reg.name]; ok {
-			diags.errorf(CodeDuplicateName, reg.goName, reg.name,
+			b.diags.errorf(CodeDuplicateName, reg.goName, reg.name,
 				"configuration property %q is bound to both %s and %s", reg.name, prev.goName, reg.goName)
 			continue
 		}
@@ -310,16 +323,12 @@ func (b *builder) compile() (*Model, Diagnostics) {
 		if reg.union != nil {
 			f.Type.Union = reg.union
 		}
-		b.validateField(f, &diags)
+		b.validateField(f)
 		root.Fields = append(root.Fields, f)
 	}
 
-	b.checkCompleteness(handled, &diags)
-
-	model := &Model{Root: root}
-	prefixPaths(root, "")
-	model.reindex()
-	return model, diags
+	b.checkCompleteness(handled)
+	return root
 }
 
 // prefixPaths assigns canonical dotted paths to nested fields.
@@ -338,32 +347,32 @@ func prefixPaths(o *ObjectModel, prefix string) {
 }
 
 // validateField checks constraints and defaults against the semantic type.
-func (b *builder) validateField(f *FieldModel, diags *Diagnostics) {
+func (b *builder) validateField(f *FieldModel) {
 	for _, c := range f.Constraints {
 		if !c.Applies(f.Type.Kind) {
-			diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
+			b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
 				"constraint %q does not apply to a %s field", c.Kind(), f.Type.Kind)
 		}
 	}
 	if f.Default != nil && f.Default.Value != nil {
 		dt := reflect.TypeOf(f.Default.Value)
 		if !dt.AssignableTo(f.Type.Go) && !dt.ConvertibleTo(f.Type.Go) {
-			diags.errorf(CodeDefaultMismatch, f.GoName, f.Name,
+			b.diags.errorf(CodeDefaultMismatch, f.GoName, f.Name,
 				"default of type %s is not assignable to %s", dt, f.Type.Go)
 		}
 	}
 	if !f.Merge.Applies(f.Type.Kind) {
-		diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
+		b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
 			"merge policy %q does not apply to a %s field", f.Merge, f.Type.Kind)
 	}
 	if !f.acc.settable {
-		diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
+		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
 			"%s is unexported and cannot be assigned; ignore it instead", f.GoName)
 	}
 }
 
 // checkCompleteness verifies that every eligible field is accounted for.
-func (b *builder) checkCompleteness(handled map[string]*registration, diags *Diagnostics) {
+func (b *builder) checkCompleteness(handled map[string]*registration) {
 	if b.opts.completeness == CompletenessDisabled {
 		return
 	}
@@ -399,7 +408,7 @@ func (b *builder) checkCompleteness(handled map[string]*registration, diags *Dia
 				check(b.bind.children(f.index))
 				continue
 			}
-			diags.errorf(CodeMissingDefinition, f.goPath, "",
+			b.diags.errorf(CodeMissingDefinition, f.goPath, "",
 				"%s is neither registered nor explicitly ignored", f.goPath)
 		}
 	}

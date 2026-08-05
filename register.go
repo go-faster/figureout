@@ -65,6 +65,55 @@ func Object[R, C any](s *Schema[R], field *C, name string, d *Descriptor[C], opt
 	return &ObjectField{&FieldBuilder{b: b, reg: reg}}
 }
 
+// ObjectFunc registers a nested configuration object described inline.
+//
+// It is [Object] without a descriptor variable: describe runs against a nested
+// [Schema] rooted at the field, so pointer binding, completeness and name
+// collisions are scoped to C exactly as they would be in a separate [Derive].
+//
+//	figureout.ObjectFunc(s, &c.Server, "server", func(c *Server, s *figureout.Schema[Server]) {
+//		figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+//	})
+//
+// Prefer [Object] for a descriptor shared by several parents or exported for
+// its own sake, and ObjectFunc for a section that has exactly one parent.
+func ObjectFunc[R, C any](
+	s *Schema[R],
+	field *C,
+	name string,
+	describe func(*C, *Schema[C]),
+	opts ...FieldOption,
+) *ObjectField {
+	b := s.b
+	reg := b.register(unsafe.Pointer(field), reflect.TypeFor[C](), name, regObject)
+	if reg.goName != "" {
+		switch {
+		case describe == nil:
+			b.diags.errorf(CodeMissingDefinition, reg.goName, name,
+				"nil describe function for nested object %q", name)
+		case reg.acc.presence != PresenceRequired:
+			b.diags.errorf(CodeUnsupportedType, reg.goName, name,
+				"nested objects do not support %s presence yet", reg.acc.presence)
+		default:
+			reg.object = describeNested(b, reg, describe)
+			reg.typ = Type{Kind: TypeObject, Go: reg.acc.elem, Object: reg.object}
+		}
+	}
+	b.applyOptions(reg, opts)
+	return &ObjectField{&FieldBuilder{b: b, reg: reg}}
+}
+
+// describeNested compiles a child object with its own builder, rooted at the
+// nested value inside this builder's synthetic object.
+func describeNested[C any](b *builder, reg *registration, describe func(*C, *Schema[C])) *ObjectModel {
+	rv := b.root.FieldByIndex(reg.bound.index)
+	nb := newBuilder(rv, reg.goName, b.opts)
+	describe(rv.Addr().Interface().(*C), &Schema[C]{b: nb})
+	obj := nb.compile()
+	b.diags = append(b.diags, nb.diags...)
+	return obj
+}
+
 // IgnoreOption customizes an ignore declaration.
 type IgnoreOption interface {
 	applyIgnore(*registration) error

@@ -168,6 +168,28 @@ Whatever the naming produces is still collision-checked, so a function that
 flattens away a level is reported rather than silently binding two fields to
 one variable.
 
+## Nesting
+
+A nested object is either its own descriptor or an inline description:
+
+```go
+figureout.Object(s, &c.Server, "server", ServerDescriptor)  // shared or exported
+
+figureout.ObjectFunc(s, &c.Server, "server", func(c *Server, s *figureout.Schema[Server]) {
+	figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT")).InRange(1, 65535)
+})
+```
+
+`ObjectFunc` runs `describe` against a nested `Schema` rooted at the field, so
+pointer binding, completeness and name collisions are scoped to `Server`
+exactly as a separate `Derive` would scope them — including `env.Name`, which
+still replaces only that field's segment and reads `SERVER_LISTEN_PORT`. A
+pointer that leaves the nested struct is a foreign-pointer diagnostic rather
+than a silent binding.
+
+Use `Object` for a descriptor several parents share or that you want to export,
+and `ObjectFunc` for a section with exactly one parent — which is most of them.
+
 ## Presence
 
 Presence is spelled by the registration function, and the value type is
