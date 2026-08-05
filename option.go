@@ -267,6 +267,19 @@ func Doc(text string) FieldOption {
 // name a former level: MovedFrom("legacy.addr") reads the old nesting. Levels
 // that no longer exist are synthesized as deprecated objects; a level that is a
 // nested descriptor of its own is reported rather than modified.
+//
+// That scope decides how to reshape a flat legacy key into a section, which is
+// the main thing MovedFrom exists for. Use [Group], which keeps the field
+// declared by the root schema, so a root-relative former path is in scope:
+//
+//	figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
+//		figureout.Value(s, &c.API.HTTPAddr, "http_addr",
+//			figureout.MovedFrom("http_addr"))
+//	})
+//
+// The same registration inside [ObjectFunc] cannot express it: the field is
+// declared by the nested descriptor, where "http_addr" resolves to the field
+// itself rather than to the document root, and is reported as such.
 func MovedFrom(paths ...string) FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
 		if len(paths) == 0 {

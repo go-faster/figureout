@@ -425,8 +425,13 @@ figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
   object, so old nesting keeps parsing
 
 The path is relative to the declaring descriptor, so it can name a former level.
-A former path that runs through a nested descriptor rather than a group is
-reported at derivation, because that descriptor may be shared.
+That scope is also what decides whether a former path is expressible at all:
+`Group` above keeps the field declared by the root schema, so root-relative
+`http_addr` is in scope. The same registration inside `ObjectFunc` is not — the
+field belongs to the nested descriptor, where `http_addr` resolves to the field
+itself, and derivation says so. A former path running through a nested
+descriptor rather than a group is reported too, because that descriptor may be
+shared.
 
 ## Enum and OneOf
 

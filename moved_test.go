@@ -156,6 +156,44 @@ func TestMovedFromCollides(t *testing.T) {
 	require.Contains(t, err.Error(), "is already a configuration property")
 }
 
+func TestMovedFromInNestedDescriptorExplainsScope(t *testing.T) {
+	type api struct{ HTTPAddr string }
+	type cfg struct{ API api }
+
+	// The intent is "the old spelling was at the document root", but a former
+	// path is relative to the descriptor declaring the field.
+	_, err := figureout.Derive(func(c *cfg, s *figureout.Schema[cfg]) {
+		figureout.ObjectFunc(s, &c.API, "api", func(c *api, s *figureout.Schema[api]) {
+			figureout.Value(s, &c.HTTPAddr, "http_addr",
+				figureout.MovedFrom("http_addr")).ApplyDefault(":8080")
+		})
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "resolves to the field itself")
+	require.Contains(t, err.Error(), "cfg.API", "the message names the scope it resolved in")
+	require.Contains(t, err.Error(), "Group", "and the idiom that does work")
+}
+
+func TestMovedFromInGroupReachesTheRoot(t *testing.T) {
+	type api struct{ HTTPAddr string }
+	type cfg struct{ API api }
+
+	// Group keeps the field declared by the root schema, so a root-relative
+	// former path is in scope.
+	d, err := figureout.Derive(func(c *cfg, s *figureout.Schema[cfg]) {
+		figureout.Group(s, "api", func(s *figureout.Schema[cfg]) {
+			figureout.Value(s, &c.API.HTTPAddr, "http_addr",
+				figureout.MovedFrom("http_addr")).ApplyDefault(":8080")
+		})
+	})
+	require.NoError(t, err)
+
+	resolved, report, err := d.Resolve(yaml.Bytes([]byte(`http_addr: ":9090"`)))
+	require.NoError(t, err)
+	require.Equal(t, ":9090", resolved.API.HTTPAddr)
+	require.Equal(t, []string{"http_addr: deprecated, use api.http_addr"}, warnings(report.Diagnostics))
+}
+
 func TestMovedFromThroughNonGroup(t *testing.T) {
 	type nested struct{ Addr string }
 	type cfg struct {

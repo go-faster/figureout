@@ -67,8 +67,21 @@ func (b *builder) placeShadow(root *ObjectModel, target *FieldModel, old string)
 
 	name := segments[len(segments)-1]
 	if prev := member(obj, name); prev != nil {
+		// Resolving to the field itself is the mistake a reader makes first:
+		// the old spelling was at the document root, but the field is declared
+		// by a nested descriptor, where a former path cannot reach the root.
+		if prev == target {
+			b.diags.errorf(CodeDuplicateName, target.GoName, old,
+				"former path %q is relative to the descriptor declaring the field (%s), "+
+					"where it resolves to the field itself; "+
+					"declare the field with Group if the old spelling was at the document root",
+				old, b.goPath)
+			return
+		}
 		b.diags.errorf(CodeDuplicateName, target.GoName, old,
-			"former path %q of %s is already a configuration property", old, target.Name)
+			"former path %q of %s is already a configuration property of %s; "+
+				"former paths are relative to the descriptor declaring the field",
+			old, target.Name, b.goPath)
 		return
 	}
 
