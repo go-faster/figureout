@@ -264,10 +264,10 @@ func (g *generator) scalar(f *figureout.FieldModel) map[string]any {
 		doc["contentEncoding"] = "base64"
 	}
 	if f.Type.Kind == figureout.TypeList && f.Type.Elem != nil {
-		doc["items"] = g.typeSchema(*f.Type.Elem)
+		doc["items"] = g.elemSchema(*f.Type.Elem)
 	}
 	if f.Type.Kind == figureout.TypeMap && f.Type.Elem != nil {
-		doc["additionalProperties"] = g.typeSchema(*f.Type.Elem)
+		doc["additionalProperties"] = g.elemSchema(*f.Type.Elem)
 	}
 
 	g.constraints(f, doc)
@@ -305,6 +305,15 @@ func appendUnique(dst []string, v string) []string {
 		}
 	}
 	return append(dst, v)
+}
+
+// elemSchema describes a collection's element, which is a whole object when the
+// collection was registered with ListOf, List, MapOf or Map.
+func (g *generator) elemSchema(t figureout.Type) map[string]any {
+	if t.Object != nil {
+		return g.object(t.Object)
+	}
+	return g.typeSchema(t)
 }
 
 func (g *generator) typeSchema(t figureout.Type) map[string]any {

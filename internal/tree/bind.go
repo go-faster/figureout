@@ -1,7 +1,9 @@
 package tree
 
 import (
+	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/go-faster/errors"
@@ -50,16 +52,22 @@ func (b Binder) Bind(m *figureout.Model, root *Node) *figureout.Layer {
 			"document root must be an object, got %s", root.Kind)
 		return layer
 	}
-	b.object(layer, m.Root, root, "", nil)
+	b.object(layer, m.Root, root, "", "", nil)
 	return layer
 }
 
-// object binds an object node. claimed is seeded with member names already
-// consumed by the caller, such as a union's discriminator.
+// object binds an object node.
+//
+// base is the layer path this object contributes to, which is the field's model
+// path everywhere except inside a collection, where it names one element.
+// prefix is the document path, which follows the source's own names and drives
+// provenance. claimed is seeded with member names already consumed by the
+// caller, such as a union's discriminator.
 func (b Binder) object(
 	layer *figureout.Layer,
 	obj *figureout.ObjectModel,
 	node *Node,
+	base string,
 	prefix string,
 	claimed map[string]struct{},
 ) {
@@ -74,25 +82,37 @@ func (b Binder) object(
 		}
 		claimed[name] = struct{}{}
 		docPath := prefix + name
+		path := base + f.Name
 
-		switch {
+		// A field that installed its own decoder owns every shape it declared,
+		// including object and array ones the semantic type cannot describe.
+		if dec, ok := decoderOf(f, b.Source); ok {
+			b.decode(layer, f, dec, child, path, docPath, pos)
+			continue
+		}
+
+		switch elem, collection := f.Elements(); {
 		case f.Type.Union != nil:
-			b.union(layer, f, child, docPath)
+			b.union(layer, f, child, path, docPath)
 		case f.Type.Object != nil:
 			if child.Kind != Object {
 				// A ScalarOr field accepts its scalar spelling here; the core
 				// widens it into the object.
 				if short, ok := f.Shorthand(); ok {
-					b.shorthand(layer, f, short, child, docPath, pos)
+					b.shorthand(layer, f, short, child, path, docPath, pos)
 					continue
 				}
-				b.errorf(layer, f.Path, child.Pos, figureout.CodeSourceUnsupported,
+				b.errorf(layer, path, child.Pos, figureout.CodeSourceUnsupported,
 					"%s must be an object, got %s", docPath, child.Kind)
 				continue
 			}
-			b.object(layer, f.Type.Object, child, docPath+".", nil)
+			b.object(layer, f.Type.Object, child, path+".", docPath+".", nil)
+		case collection && f.Type.Kind == figureout.TypeList:
+			b.elements(layer, f, elem, child, path, docPath)
+		case collection:
+			b.entries(layer, elem, child, path, docPath)
 		default:
-			b.leaf(layer, f, child, docPath, pos)
+			b.leaf(layer, f, child, path, docPath, pos)
 		}
 	}
 
@@ -140,15 +160,15 @@ func (b Binder) names(f *figureout.FieldModel) []string {
 
 // union reads the discriminator and binds the matching variant against the
 // same node, so a variant's members are siblings of the tag.
-func (b Binder) union(layer *figureout.Layer, f *figureout.FieldModel, node *Node, docPath string) {
+func (b Binder) union(layer *figureout.Layer, f *figureout.FieldModel, node *Node, base, docPath string) {
 	if node.Kind != Object {
-		b.errorf(layer, f.Path, node.Pos, figureout.CodeUnionInvalid,
+		b.errorf(layer, base, node.Pos, figureout.CodeUnionInvalid,
 			"%s must be an object, got %s", docPath, node.Kind)
 		return
 	}
 
 	u := f.Type.Union
-	path, _ := figureout.DiscriminatorPath(f)
+	path := base + "." + u.Discriminator
 	tagNode, tagPos, ok := node.Field(u.Discriminator)
 	if !ok {
 		b.errorf(layer, path, node.Pos, figureout.CodeMissingDefinition,
@@ -169,7 +189,7 @@ func (b Binder) union(layer *figureout.Layer, f *figureout.FieldModel, node *Nod
 		}
 		// The tag is a sibling of the variant's members, so it is already
 		// accounted for when the variant's object is bound to the same node.
-		b.object(layer, variant.Object, node, docPath+".", map[string]struct{}{
+		b.object(layer, variant.Object, node, base+".", docPath+".", map[string]struct{}{
 			u.Discriminator: {},
 		})
 		return
@@ -183,45 +203,236 @@ func (b Binder) union(layer *figureout.Layer, f *figureout.FieldModel, node *Nod
 		"unknown variant %q, want one of [%s]", tag, strings.Join(tags, ", "))
 }
 
+// elements binds a list whose items are objects, giving each item a path of its
+// own so it merges, validates and reports like any other part of the document.
+func (b Binder) elements(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	elem *figureout.ObjectModel,
+	node *Node,
+	path, docPath string,
+) {
+	if node.Kind != Array {
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+			"%s must be an array, got %s", docPath, node.Kind)
+		return
+	}
+	// The list itself is assigned, so the merge policy can tell "this layer
+	// provided the list" from "this layer said nothing about it".
+	layer.Set(path, figureout.Collection{}, b.origin(docPath, node.Pos))
+
+	seen := map[string]int{}
+	for i, item := range node.Items {
+		where := fmt.Sprintf("%s[%d]", docPath, i)
+		if item.Kind != Object {
+			b.errorf(layer, path, item.Pos, figureout.CodeSourceUnsupported,
+				"%s must be an object, got %s", where, item.Kind)
+			continue
+		}
+
+		key, ok := b.elementKey(layer, f, item, path, where, i)
+		if !ok {
+			continue
+		}
+		if prev, dup := seen[key]; dup {
+			b.errorf(layer, figureout.ElementPath(path, key), item.Pos, figureout.CodeDuplicateName,
+				"%s repeats %s, which identifies an element", where, fmt.Sprintf("%s[%d]", docPath, prev))
+			continue
+		}
+		seen[key] = i
+
+		b.object(layer, elem, item, figureout.ElementPath(path, key)+".", where+".", nil)
+	}
+}
+
+// elementKey returns the subscript identifying one element: its merge key when
+// the list declares one, and its position otherwise.
+//
+// A key has to be read before the rest of the element, the same way a union's
+// discriminator does, because it decides where the element's members land.
+func (b Binder) elementKey(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	item *Node,
+	path, where string,
+	index int,
+) (string, bool) {
+	key, ok := f.MergeKey()
+	if !ok {
+		return strconv.Itoa(index), true
+	}
+
+	node, _, found := item.Field(key.Name)
+	if !found || node.Kind != Scalar {
+		b.errorf(layer, path, item.Pos, figureout.CodeMissingDefinition,
+			"%s must set %q, which identifies an element of %s", where, key.Name, f.Name)
+		return "", false
+	}
+	return key.Name + "=" + fmt.Sprint(Raw(node)), true
+}
+
+// entries binds a map whose values are objects. A map already has an identity
+// for each entry, so its key is the subscript.
+func (b Binder) entries(
+	layer *figureout.Layer,
+	elem *figureout.ObjectModel,
+	node *Node,
+	path, docPath string,
+) {
+	if node.Kind != Object {
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+			"%s must be an object, got %s", docPath, node.Kind)
+		return
+	}
+	layer.Set(path, figureout.Collection{}, b.origin(docPath, node.Pos))
+
+	for _, entry := range node.Fields {
+		where := docPath + "." + entry.Key
+		entryPath := figureout.ElementPath(path, entry.Key)
+
+		if entry.Value.Kind == Null {
+			// Removing one entry is spellable here, and null already means
+			// erase, so it needs no directive of its own.
+			if !b.AllowNull {
+				b.errorf(layer, entryPath, entry.Value.Pos, figureout.CodeSourceUnsupported,
+					"%s does not represent null", b.Source)
+				continue
+			}
+			layer.SetNull(entryPath, b.origin(where, entry.Pos))
+			continue
+		}
+		if entry.Value.Kind != Object {
+			b.errorf(layer, entryPath, entry.Value.Pos, figureout.CodeSourceUnsupported,
+				"%s must be an object, got %s", where, entry.Value.Kind)
+			continue
+		}
+		b.object(layer, elem, entry.Value, entryPath+".", where+".", nil)
+	}
+}
+
+// decoderOf returns the decoder a field installed for this source.
+func decoderOf(f *figureout.FieldModel, id figureout.SourceID) (figureout.Decoder, bool) {
+	p, ok := f.Source(id)
+	if !ok || p.Skip || p.Decoder == nil {
+		return nil, false
+	}
+	return p.Decoder, true
+}
+
+// decode hands a node to the field's own decoder, gated on the shapes the field
+// declared. A shape it did not declare fails the same way it would without a
+// decoder, so declaring shapes stays the thing that decides what is accepted.
+func (b Binder) decode(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	dec figureout.Decoder,
+	node *Node,
+	path string,
+	docPath string,
+	pos Pos,
+) {
+	origin := b.origin(docPath, pos)
+
+	// Null stays a merge directive: it erases rather than reaching a decoder.
+	if node.Kind == Null {
+		if !b.AllowNull {
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(path, origin)
+		return
+	}
+
+	accepts := acceptsOf(f, b.Source)
+	if !accepted(accepts, node) {
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+			"want %s, got %s", shapeNames(accepts), node.Kind)
+		return
+	}
+
+	v, err := dec.DecodeValue(Raw(node))
+	if err != nil {
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
+		return
+	}
+	layer.Set(path, v, origin)
+}
+
+// accepted reports whether a node matches one of the declared shapes.
+func accepted(accepts []figureout.Shape, node *Node) bool {
+	if len(accepts) == 0 {
+		return true
+	}
+	want := ShapeOf(node)
+	for _, s := range accepts {
+		// A scalar node reports an unknown shape: which scalar it is belongs to
+		// the format, so any scalar shape accepts it.
+		if s.Kind == want || (want == figureout.ShapeUnknown && scalarShape(s.Kind)) {
+			return true
+		}
+	}
+	return false
+}
+
+func scalarShape(k figureout.ShapeKind) bool {
+	switch k {
+	case figureout.ShapeBoolean, figureout.ShapeInteger, figureout.ShapeNumber, figureout.ShapeString:
+		return true
+	default:
+		return false
+	}
+}
+
+func shapeNames(accepts []figureout.Shape) string {
+	names := make([]string, 0, len(accepts))
+	for _, s := range accepts {
+		names = append(names, s.Kind.String())
+	}
+	return strings.Join(names, " or ")
+}
+
 // shorthand binds the scalar spelling of an object field.
 func (b Binder) shorthand(
 	layer *figureout.Layer,
 	f *figureout.FieldModel,
 	short figureout.Type,
 	node *Node,
+	path string,
 	docPath string,
 	pos Pos,
 ) {
 	origin := b.origin(docPath, pos)
 	if node.Kind == Null {
 		if !b.AllowNull {
-			b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported,
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
 				"%s does not represent null", b.Source)
 			return
 		}
-		layer.SetNull(f.Path, origin)
+		layer.SetNull(path, origin)
 		return
 	}
 
 	v, err := b.value(short, node, acceptsOf(f, b.Source))
 	if err != nil {
-		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
 			figureout.Redact(f, err.Error(), node.Text, node.Value))
 		return
 	}
-	layer.Set(f.Path, v, origin)
+	layer.Set(path, v, origin)
 }
 
-func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node, docPath string, pos Pos) {
+func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node, path, docPath string, pos Pos) {
 	origin := b.origin(docPath, pos)
 
 	if node.Kind == Null {
 		if !b.AllowNull {
-			b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported,
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
 				"%s does not represent null", b.Source)
 			return
 		}
-		layer.SetNull(f.Path, origin)
+		layer.SetNull(path, origin)
 		return
 	}
 
@@ -229,11 +440,11 @@ func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node
 	if err != nil {
 		// A decoding failure quotes what it could not read, which for a secret
 		// field is the secret itself.
-		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
 			figureout.Redact(f, err.Error(), node.Text, node.Value))
 		return
 	}
-	layer.Set(f.Path, v, origin)
+	layer.Set(path, v, origin)
 }
 
 // value converts a node to the semantic Go value of t. Structure is shared;

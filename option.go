@@ -205,7 +205,24 @@ func AcceptShapes(id SourceID, shapes ...Shape) FieldOption {
 // WithDecoder installs a source decoder together with the shapes it accepts.
 //
 // A decoder is opaque, so the shapes are mandatory: without them, schema
-// generation cannot describe what the source will accept.
+// generation cannot describe what the source will accept, and nothing decides
+// what reaches the decoder. A shape the field did not declare is rejected
+// before the decoder runs.
+//
+// The decoder owns every shape it declared, including object and array ones the
+// semantic type cannot describe — which is what makes it the way to keep
+// parsing a carrier that is going away:
+//
+//	figureout.Value(s, &c.Token, "token",
+//		figureout.WithDecoder(yaml.Source, carrierDecoder{},
+//			figureout.Shape{Kind: figureout.ShapeString},
+//			figureout.Shape{Kind: figureout.ShapeObject, Fields: map[string]figureout.Shape{
+//				"env": {Kind: figureout.ShapeString},
+//			})))
+//
+// A tree source hands over the node as []any, map[string]any or the scalar it
+// decoded; sources whose values are text, such as env and file, hand over the
+// text. Null never reaches a decoder: it stays a merge directive that erases.
 func WithDecoder(id SourceID, d Decoder, shapes ...Shape) FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
 		if d == nil {
@@ -267,6 +284,19 @@ func Doc(text string) FieldOption {
 // name a former level: MovedFrom("legacy.addr") reads the old nesting. Levels
 // that no longer exist are synthesized as deprecated objects; a level that is a
 // nested descriptor of its own is reported rather than modified.
+//
+// That scope decides how to reshape a flat legacy key into a section, which is
+// the main thing MovedFrom exists for. Use [Group], which keeps the field
+// declared by the root schema, so a root-relative former path is in scope:
+//
+//	figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
+//		figureout.Value(s, &c.API.HTTPAddr, "http_addr",
+//			figureout.MovedFrom("http_addr"))
+//	})
+//
+// The same registration inside [ObjectFunc] cannot express it: the field is
+// declared by the nested descriptor, where "http_addr" resolves to the field
+// itself rather than to the document root, and is reported as such.
 func MovedFrom(paths ...string) FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
 		if len(paths) == 0 {

@@ -97,6 +97,7 @@ type registration struct {
 	meta        Metadata
 	def         *Default
 	merge       MergePolicy
+	mergeKey    string
 	movedFrom   []string
 	constraints []Constraint
 	sources     map[SourceID]*SourceProjection
@@ -392,6 +393,9 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 		if reg.union != nil {
 			f.Type.Union = reg.union
 		}
+		if reg.mergeKey != "" {
+			b.resolveMergeKey(f, reg.mergeKey)
+		}
 		b.validateField(f)
 		root.Fields = append(root.Fields, f)
 	}
@@ -409,6 +413,11 @@ func prefixPaths(o *ObjectModel, prefix string) {
 			for _, v := range f.Type.Union.Variants {
 				prefixPaths(v.Object, f.Path+".")
 			}
+		}
+		if elem, ok := collectionOf(f); ok {
+			// Every element shares one description, so the model spells the
+			// subscript empty: "sites[].max_bytes".
+			prefixPaths(elem, ElementPath(f.Path, "")+".")
 		}
 	}
 }
@@ -428,7 +437,24 @@ func (b *builder) validateField(f *FieldModel) {
 				"default of type %s is not assignable to %s", dt, f.Type.Go)
 		}
 	}
-	if !f.Merge.Applies(f.Type.Kind) {
+	// Deriving clean and failing at resolve time is the wrong end to fail at: a
+	// descriptor that cannot possibly work should not compile. A field that
+	// installed its own decoder owns its shape, so it describes itself.
+	if !decoded(f) {
+		if elem := f.Type.Elem; elem != nil && elem.Kind == TypeObject && elem.Object == nil {
+			b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
+				"elements of %q are objects with no description; register it with %s",
+				f.Name, collectionRegistrars(f.Type.Kind))
+		}
+		if f.Type.Kind == TypeObject && f.Type.Object == nil && f.Type.Union == nil {
+			b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
+				"%q is an object with no description; register it with Object or ObjectFunc", f.Name)
+		}
+	}
+	// A keyed list merges by key exactly as a map does; without a key, by-key
+	// has nothing to identify an element with.
+	keyed := f.Merge == MergeByKey && f.Type.Kind == TypeList && f.mergeKey != nil
+	if !keyed && !f.Merge.Applies(f.Type.Kind) {
 		b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
 			"merge policy %q does not apply to a %s field", f.Merge, f.Type.Kind)
 	}
@@ -436,6 +462,24 @@ func (b *builder) validateField(f *FieldModel) {
 		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
 			"%s is unexported and cannot be assigned; ignore it instead", f.GoName)
 	}
+}
+
+// decoded reports whether any source decodes the field itself, in which case
+// the shape it accepts is the decoder's business rather than the model's.
+func decoded(f *FieldModel) bool {
+	for _, p := range f.Sources {
+		if p.Decoder != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func collectionRegistrars(k TypeKind) string {
+	if k == TypeMap {
+		return "MapOf or Map"
+	}
+	return "ListOf or List"
 }
 
 // checkCompleteness verifies that every eligible field is accounted for.

@@ -105,7 +105,7 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 			continue
 		}
 
-		v, err := parse(e.typ, raw, separatorOf(e.field))
+		v, err := decode(e.field, raw, e.typ, separatorOf(e.field))
 		if err != nil {
 			layer.Diagnostics = append(layer.Diagnostics, figureout.Diagnostic{
 				Severity:  figureout.SeverityError,
@@ -121,6 +121,16 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 		layer.Set(e.path, v, origin)
 	}
 	return layer, nil
+}
+
+// decode converts a variable's text, through the field's own decoder when it
+// installed one. A decoder receives the raw text: an environment variable has no
+// structure to present it with.
+func decode(f *figureout.FieldModel, raw string, typ figureout.Type, sep string) (any, error) {
+	if p, ok := f.Source(Source); ok && p.Decoder != nil {
+		return p.Decoder.DecodeValue(raw)
+	}
+	return parse(typ, raw, sep)
 }
 
 // lookup returns the first variable that is set, with its name and value.
@@ -187,6 +197,11 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 			for _, variant := range f.Type.Union.Variants {
 				p.object(variant.Object, own)
 			}
+		case isCollection(f):
+			// A list or map of objects has no spelling here. An index
+			// convention would be a second, worse way to write the same
+			// configuration, so the field is simply not read from this source.
+			continue
 		case f.Type.Object != nil:
 			// An object has no spelling here, so a ScalarOr field binds its
 			// scalar alternative at the object's own name; its members still
@@ -215,6 +230,13 @@ func (p *planner) add(e entry) {
 		p.byName[n] = e.path
 	}
 	p.out = append(p.out, e)
+}
+
+// isCollection reports whether a field is a list or map of described objects,
+// which this source cannot express.
+func isCollection(f *figureout.FieldModel) bool {
+	_, ok := f.Elements()
+	return ok
 }
 
 // segmentOf returns the field's own name segment, which [Name] replaces.

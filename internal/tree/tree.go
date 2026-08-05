@@ -8,6 +8,8 @@
 // with its adapter, behind [ScalarDecoder].
 package tree
 
+import "github.com/go-faster/figureout"
+
 // Kind is the structural kind of a document node.
 type Kind uint8
 
@@ -57,6 +59,59 @@ type Node struct {
 
 	Items  []*Node
 	Fields []Field
+}
+
+// Raw returns the node as the format's natural Go representation, for a field
+// that installed its own [figureout.Decoder].
+//
+// A scalar is whatever the adapter decoded while parsing, or its text for
+// adapters that keep scalars as text; structure becomes []any and
+// map[string]any. It is deliberately untyped: a decoder exists precisely to
+// interpret a shape the semantic type does not describe.
+func Raw(n *Node) any {
+	if n == nil {
+		return nil
+	}
+	switch n.Kind {
+	case Null:
+		return nil
+	case Array:
+		out := make([]any, 0, len(n.Items))
+		for _, item := range n.Items {
+			out = append(out, Raw(item))
+		}
+		return out
+	case Object:
+		out := make(map[string]any, len(n.Fields))
+		for _, f := range n.Fields {
+			out[f.Key] = Raw(f.Value)
+		}
+		return out
+	default:
+		if n.Value != nil {
+			return n.Value
+		}
+		return n.Text
+	}
+}
+
+// ShapeOf returns the wire shape a node presents, so a field's declared
+// [figureout.Shape] values can gate what reaches its decoder.
+//
+// A scalar reports [figureout.ShapeUnknown]: telling an integer from a string
+// is the format's job, not the tree's, and a decoder that declares any scalar
+// shape accepts it.
+func ShapeOf(n *Node) figureout.ShapeKind {
+	switch n.Kind {
+	case Null:
+		return figureout.ShapeNull
+	case Array:
+		return figureout.ShapeArray
+	case Object:
+		return figureout.ShapeObject
+	default:
+		return figureout.ShapeUnknown
+	}
 }
 
 // Field is one member of an object node.
