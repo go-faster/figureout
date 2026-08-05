@@ -200,11 +200,84 @@ func TestListEmptyIsNotMissing(t *testing.T) {
 	require.Empty(t, cfg.Sites)
 }
 
-func TestListMissingIsRequired(t *testing.T) {
-	_, _, err := crawlDescriptor(t, false).Resolve(yaml.Bytes([]byte("proxies: {}\n")))
+func TestAbsentCollectionIsEmpty(t *testing.T) {
+	// "No sites are configured" and "the sites list is empty" are the same
+	// statement about the world, so a section nobody wrote is not an error.
+	cfg, _, err := crawlDescriptor(t, false).Resolve(yaml.Bytes([]byte("{}\n")))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Sites, "empty rather than nil, so it encodes as [] and not null")
+	require.Empty(t, cfg.Sites)
+	require.NotNil(t, cfg.Proxies)
+	require.Empty(t, cfg.Proxies)
+}
+
+func TestAbsentPlainCollectionIsEmpty(t *testing.T) {
+	// The same rule for a list that was never described.
+	type c struct {
+		Tags   []string
+		Limits map[string]int
+	}
+	d, err := figureout.Derive(func(cfg *c, s *figureout.Schema[c]) {
+		figureout.Value(s, &cfg.Tags, "tags")
+		figureout.Value(s, &cfg.Limits, "limits")
+	})
+	require.NoError(t, err)
+
+	cfg, _, err := d.Resolve(yaml.Bytes([]byte("{}\n")))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Tags)
+	require.Empty(t, cfg.Tags)
+	require.NotNil(t, cfg.Limits)
+	require.Empty(t, cfg.Limits)
+}
+
+func TestRequiredCollectionOptsBackIn(t *testing.T) {
+	d, err := figureout.Derive(func(c *crawlConfig, s *figureout.Schema[crawlConfig]) {
+		figureout.ListOf(s, &c.Sites, "sites", describeSite).Required()
+		figureout.MapOf(s, &c.Proxies, "proxies", describeProxy)
+	})
+	require.NoError(t, err)
+
+	_, _, err = d.Resolve(yaml.Bytes([]byte("{}\n")))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "sites")
 	require.Contains(t, err.Error(), figureout.CodeMissingDefinition)
+}
+
+func TestRequiredRejectsAnOptionalCarrier(t *testing.T) {
+	type c struct {
+		Tags figureout.OptionalOf[[]string]
+	}
+	_, err := figureout.Derive(func(cfg *c, s *figureout.Schema[c]) {
+		figureout.Optional(s, &cfg.Tags, "tags").Required()
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be required")
+}
+
+func TestErasedCollectionIsEmpty(t *testing.T) {
+	cfg, report, err := crawlDescriptor(t, false).Resolve(
+		yaml.Bytes([]byte("sites:\n  - name: docs\nproxies: {}\n")),
+		yaml.Bytes([]byte("sites: null\n")),
+	)
+	require.NoError(t, err)
+	require.Empty(t, cfg.Sites, "an erase falls back the same way an absence does")
+
+	_, erased := report.ErasedBy("sites")
+	require.True(t, erased)
+}
+
+func TestCollectionSchemaRequired(t *testing.T) {
+	raw, _, err := jsonschema.Generate(crawlDescriptor(t, false), jsonschema.Semantic())
+	require.NoError(t, err)
+
+	var doc struct {
+		Required []string `json:"required"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	require.NotContains(t, doc.Required, "sites",
+		"a collection that resolves to empty is not required of a document")
+	require.NotContains(t, doc.Required, "proxies")
 }
 
 func TestMapOfDecodesEntries(t *testing.T) {

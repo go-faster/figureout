@@ -279,7 +279,11 @@ func (m *Model) foldCollectionItself(res *resolution, a Assignment, f *FieldMode
 	case a.State == ValueNull:
 		res.clear(a.Path)
 		origin := a.Origin
-		res.collection(a.Path).erased = &origin
+		c := res.collection(a.Path)
+		c.erased = &origin
+		// Erased is not provided: the field falls back the way an absent one
+		// does, which for a collection is an empty one.
+		c.provided = false
 		return
 	case f.Merge == MergeReplace:
 		// A layer that provides the list provides all of it: the elements it

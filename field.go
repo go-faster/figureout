@@ -58,6 +58,24 @@ func (f *FieldBuilder) Examples(values ...any) *FieldBuilder {
 	return f
 }
 
+// Required makes an absent collection an error instead of an empty one.
+//
+// It is meaningful only for a list or a map: every other field is required
+// already, and an [OptionalOf] carrier says the opposite by construction.
+func (f *FieldBuilder) Required() *FieldBuilder {
+	if !f.ok() {
+		return f
+	}
+	if f.reg.acc.presence != PresenceRequired {
+		f.b.diags.errorf(CodeConstraintMismatch, f.reg.goName, f.reg.name,
+			"%s carries %s presence and cannot be required",
+			f.reg.goName, f.reg.acc.presence)
+		return f
+	}
+	f.reg.required = true
+	return f
+}
+
 // With applies field options after registration.
 func (f *FieldBuilder) With(opts ...FieldOption) *FieldBuilder {
 	if f.ok() {
@@ -111,6 +129,12 @@ func (f *ValueField[T]) Hidden() *ValueField[T] {
 // Examples attaches example values.
 func (f *ValueField[T]) Examples(values ...T) *ValueField[T] {
 	f.FieldBuilder.Examples(anySlice(values)...)
+	return f
+}
+
+// Required makes an absent collection an error instead of an empty one.
+func (f *ValueField[T]) Required() *ValueField[T] {
+	f.FieldBuilder.Required()
 	return f
 }
 

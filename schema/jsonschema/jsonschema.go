@@ -161,7 +161,7 @@ func (g *generator) object(o *figureout.ObjectModel) map[string]any {
 
 	for _, f := range o.Fields {
 		props[f.Name] = g.field(f)
-		if f.Presence == figureout.PresenceRequired && !applied(f) {
+		if f.Required() {
 			required = append(required, f.Name)
 		}
 	}

@@ -96,6 +96,7 @@ type registration struct {
 
 	meta        Metadata
 	def         *Default
+	required    bool
 	merge       MergePolicy
 	mergeKey    string
 	movedFrom   []string
@@ -384,6 +385,7 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 			Sources:     reg.sources,
 			Targets:     reg.targets,
 			MovedFrom:   reg.movedFrom,
+			required:    reg.required,
 			widen:       reg.widen,
 			acc:         reg.acc,
 		}

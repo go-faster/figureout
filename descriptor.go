@@ -95,7 +95,30 @@ type FieldModel struct {
 	// for a list registered with [ListField.MergeByKey].
 	mergeKey *FieldModel
 
+	// required records an explicit [FieldBuilder.Required], which only a
+	// collection needs: everything else is required already.
+	required bool
+
 	acc accessor
+}
+
+// Required reports whether a source has to provide the field.
+//
+// A plain field is required unless it carries an applied default. A collection
+// is the exception: an absent list and an empty one are the same statement
+// about the world, so it resolves to empty unless [FieldBuilder.Required] says
+// otherwise.
+func (f *FieldModel) Required() bool {
+	switch {
+	case f.Presence != PresenceRequired:
+		return false
+	case f.Default != nil && f.Default.Applied:
+		return false
+	case f.Type.Kind == TypeList || f.Type.Kind == TypeMap:
+		return f.required
+	default:
+		return true
+	}
 }
 
 // Moved reports whether the field is a deprecated former spelling of another

@@ -250,7 +250,8 @@ proxies[gitlab].url         a map, by key
 
 A list of structs that nobody described is a **derivation** error naming
 `ListOf`, rather than a descriptor that compiles clean and fails at resolve
-time.
+time. An absent collection resolves to an empty one — see [Presence](#presence)
+— and `sites: null` erases it back to empty.
 
 ### Merging elements
 
@@ -313,6 +314,17 @@ function to use instead, so the two cannot be mixed up silently.
 
 A plain field is required: a missing value is an error unless the field has an
 applied default. Optionality lives in the Go type, never in a pointer.
+
+**A collection is the exception.** An absent list and an empty one are the same
+statement about the world, so a list or map nobody configured resolves to an
+empty one rather than to a diagnostic — and to an empty value, not a nil one,
+so it encodes as `[]` rather than `null` one layer further out. `Required()`
+opts back in where a section really must be declared:
+
+```go
+figureout.ListOf(s, &c.Sites, "sites", describeSite)              // absent is empty
+figureout.ListOf(s, &c.Backends, "backends", describeBackend).Required()
+```
 
 There is **no nullable carrier**. Optional and nullable are orthogonal in a
 schema language, where an external spec forces the split, but configuration
