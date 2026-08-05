@@ -206,6 +206,9 @@ func (g *generator) field(f *figureout.FieldModel) map[string]any {
 	if f.Meta.Deprecated != "" {
 		doc["deprecated"] = true
 	}
+	if f.Meta.Secret {
+		doc["writeOnly"] = true
+	}
 	if len(f.Meta.Examples) > 0 {
 		doc["examples"] = wireValues(f.Type, f.Meta.Examples)
 	}

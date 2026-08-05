@@ -110,7 +110,7 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 			layer.Diagnostics = append(layer.Diagnostics, figureout.Diagnostic{
 				Severity:  figureout.SeverityError,
 				Code:      figureout.CodeSourceUnsupported,
-				Message:   err.Error(),
+				Message:   figureout.Redact(e.field, err.Error(), raw),
 				FieldPath: e.path,
 				GoPath:    e.field.GoName,
 				Source:    Source,

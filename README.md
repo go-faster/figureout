@@ -8,8 +8,8 @@ declaration.
 go get github.com/go-faster/figureout
 ```
 
-The core, three sources (JSON, YAML, environment variables) and one target
-(JSON Schema), wired end to end.
+The core, four sources (JSON, YAML, environment variables, mounted files) and
+one target (JSON Schema), wired end to end.
 
 ```go
 type Config struct {
@@ -104,10 +104,11 @@ fine either way.
 
 | Package | Contents |
 | --- | --- |
-| `figureout` | descriptor, builder, pointer binding, completeness, constraints, enums, unions, carriers, diagnostics, resolution |
+| `figureout` | descriptor, builder, pointer binding, completeness, constraints, invariants, enums, unions, carriers, secrets, diagnostics, resolution |
 | `figureout/source/json` | JSON source, with file:line:column provenance |
 | `figureout/source/yaml` | YAML source, tag-aware, anchors resolved |
 | `figureout/source/env` | environment variable source |
+| `figureout/source/file` | one value per file, for mounted secrets |
 | `figureout/schema/jsonschema` | JSON Schema target |
 
 ## Sources
@@ -320,6 +321,49 @@ strings, with their defaults and bounds spelled the way a source accepts them.
 
 Because the duration spelling keeps working, migrating away is two safe steps:
 add the unit, then add the duration-spelled key and deprecate the old one.
+
+## Secrets
+
+`Hidden` is documentation metadata and does nothing else, which leaves a token
+one `Pattern` or `MinLength` failure away from a log. `Secret` has teeth:
+
+```go
+figureout.Value(s, &c.Token, "token", figureout.Secret()).Pattern(`^sk-[a-z0-9]+$`)
+```
+
+```text
+token: must match "^sk-[a-z0-9]+$"     # never "value: hunter2"
+  source: config.yaml:3:8
+```
+
+A secret's value never appears in a message the library formats — not in a
+constraint failure, not in a decoding error from a source. `Secret` implies
+`Hidden`, and JSON Schema marks the property `writeOnly`. `report.Secret(path)`
+and `report.Secrets()` let a consumer walking `report.Origins()` apply the same
+rule to its own logging.
+
+**Where a secret comes from is a deliberate choice.** figureout owns the two
+mechanisms an operator actually deploys, and neither is a value-level
+indirection written into the configuration file:
+
+| | |
+| --- | --- |
+| an environment variable | `env.Current(env.Prefix("APP_"))` binds `database.dsn` to `APP_DATABASE_DSN` directly |
+| a mounted file | `file.Dir("/run/secrets")` reads `database.dsn` from a file of that name |
+
+`source/file` is the shape a Kubernetes secret mount, a Docker secret and
+systemd's `LoadCredential` all present: a directory whose entries are named
+after the values they hold. One trailing newline is stripped, so a secret
+written with `echo` reads back as written; a missing file leaves the field to
+earlier layers. Names compose exactly as env's do, and `file.Names` replaces the
+derivation wholesale.
+
+An in-document `{value, env, file}` carrier is deliberately **not** provided.
+Its `env:` half is redundant — the env source already binds the field directly,
+which is strictly better than an indirection the file has to spell — and its
+`file:` half is `source/file` with the mapping written out by hand. If a
+configuration must keep that shape for compatibility, it is a `WithDecoder`
+plus the shapes it accepts, not something the core owns.
 
 ## Cross-field invariants
 

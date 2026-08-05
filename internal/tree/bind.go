@@ -192,7 +192,10 @@ func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node
 
 	v, err := b.value(f.Type, node, acceptsOf(f, b.Source))
 	if err != nil {
-		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s", err)
+		// A decoding failure quotes what it could not read, which for a secret
+		// field is the secret itself.
+		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
 		return
 	}
 	layer.Set(f.Path, v, origin)

@@ -85,6 +85,9 @@ func (c *fieldContext) AddMetadata(m Metadata) error {
 	if m.Hidden {
 		c.reg.meta.Hidden = true
 	}
+	if m.Secret {
+		c.reg.meta.Secret = true
+	}
 	c.reg.meta.Examples = append(c.reg.meta.Examples, m.Examples...)
 	return nil
 }

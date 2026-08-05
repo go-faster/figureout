@@ -96,6 +96,7 @@ type Report struct {
 
 	origins map[string]Origin
 	erased  map[string]Origin
+	secrets map[string]struct{}
 }
 
 // OriginOf returns where the value at the canonical path came from.
@@ -144,7 +145,11 @@ func (d *Descriptor[T]) Resolve(sources ...Source) (T, *Report, error) {
 // ResolveContext is [Descriptor.Resolve] with a context.
 func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (T, *Report, error) {
 	var cfg T
-	rep := &Report{origins: map[string]Origin{}, erased: map[string]Origin{}}
+	rep := &Report{
+		origins: map[string]Origin{},
+		erased:  map[string]Origin{},
+		secrets: map[string]struct{}{},
+	}
 
 	state := map[string]*merged{}
 	for _, src := range sources {
@@ -354,18 +359,21 @@ func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[strin
 
 	value, err := convertValue(f.Type.Go, a.Value)
 	if err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
 		return
 	}
 	if err := f.Validate(value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
 		return
 	}
 	if err := f.acc.set(v, value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, err.Error())
+		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
 		return
 	}
 	rep.origins[f.Path] = a.Origin
+	if f.Meta.Secret {
+		rep.secrets[f.Path] = struct{}{}
+	}
 
 	// Deprecation is worth nothing to an operator unless using the key says so.
 	if f.Meta.Deprecated != "" {
@@ -393,6 +401,9 @@ func (m *Model) applyDefault(f *FieldModel, v reflect.Value, rep *Report) {
 			return
 		}
 		rep.origins[f.Path] = Origin{Source: "default"}
+		if f.Meta.Secret {
+			rep.secrets[f.Path] = struct{}{}
+		}
 		return
 	}
 	if f.Presence == PresenceRequired {

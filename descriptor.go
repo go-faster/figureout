@@ -14,7 +14,9 @@ type Metadata struct {
 	Doc        string
 	Deprecated string
 	Hidden     bool
-	Examples   []any
+	// Secret marks a credential. Unlike Hidden it is enforced: see [Secret].
+	Secret   bool
+	Examples []any
 }
 
 // Default is a field default.
