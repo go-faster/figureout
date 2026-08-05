@@ -155,7 +155,7 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 			continue
 		}
 
-		v, err := scalar.ParseText(e.typ, raw, separatorOf(e.field))
+		v, err := decode(e.field, raw, e.typ, separatorOf(e.field))
 		if err != nil {
 			layer.Diagnostics = append(layer.Diagnostics, figureout.Diagnostic{
 				Severity:  figureout.SeverityError,
@@ -171,6 +171,16 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 		layer.Set(e.path, v, origin)
 	}
 	return layer, nil
+}
+
+// decode converts a file's contents, through the field's own decoder when it
+// installed one. A decoder receives the raw text: a file holds one value, with
+// no structure to present it with.
+func decode(f *figureout.FieldModel, raw string, typ figureout.Type, sep string) (any, error) {
+	if p, ok := f.Source(Source); ok && p.Decoder != nil {
+		return p.Decoder.DecodeValue(raw)
+	}
+	return scalar.ParseText(typ, raw, sep)
 }
 
 // read returns the contents of the first file that exists.

@@ -75,6 +75,13 @@ func (b Binder) object(
 		claimed[name] = struct{}{}
 		docPath := prefix + name
 
+		// A field that installed its own decoder owns every shape it declared,
+		// including object and array ones the semantic type cannot describe.
+		if dec, ok := decoderOf(f, b.Source); ok {
+			b.decode(layer, f, dec, child, docPath, pos)
+			continue
+		}
+
 		switch {
 		case f.Type.Union != nil:
 			b.union(layer, f, child, docPath)
@@ -181,6 +188,88 @@ func (b Binder) union(layer *figureout.Layer, f *figureout.FieldModel, node *Nod
 	}
 	b.errorf(layer, path, tagNode.Pos, figureout.CodeUnionInvalid,
 		"unknown variant %q, want one of [%s]", tag, strings.Join(tags, ", "))
+}
+
+// decoderOf returns the decoder a field installed for this source.
+func decoderOf(f *figureout.FieldModel, id figureout.SourceID) (figureout.Decoder, bool) {
+	p, ok := f.Source(id)
+	if !ok || p.Skip || p.Decoder == nil {
+		return nil, false
+	}
+	return p.Decoder, true
+}
+
+// decode hands a node to the field's own decoder, gated on the shapes the field
+// declared. A shape it did not declare fails the same way it would without a
+// decoder, so declaring shapes stays the thing that decides what is accepted.
+func (b Binder) decode(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	dec figureout.Decoder,
+	node *Node,
+	docPath string,
+	pos Pos,
+) {
+	origin := b.origin(docPath, pos)
+
+	// Null stays a merge directive: it erases rather than reaching a decoder.
+	if node.Kind == Null {
+		if !b.AllowNull {
+			b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(f.Path, origin)
+		return
+	}
+
+	accepts := acceptsOf(f, b.Source)
+	if !accepted(accepts, node) {
+		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported,
+			"want %s, got %s", shapeNames(accepts), node.Kind)
+		return
+	}
+
+	v, err := dec.DecodeValue(Raw(node))
+	if err != nil {
+		b.errorf(layer, f.Path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
+		return
+	}
+	layer.Set(f.Path, v, origin)
+}
+
+// accepted reports whether a node matches one of the declared shapes.
+func accepted(accepts []figureout.Shape, node *Node) bool {
+	if len(accepts) == 0 {
+		return true
+	}
+	want := ShapeOf(node)
+	for _, s := range accepts {
+		// A scalar node reports an unknown shape: which scalar it is belongs to
+		// the format, so any scalar shape accepts it.
+		if s.Kind == want || (want == figureout.ShapeUnknown && scalarShape(s.Kind)) {
+			return true
+		}
+	}
+	return false
+}
+
+func scalarShape(k figureout.ShapeKind) bool {
+	switch k {
+	case figureout.ShapeBoolean, figureout.ShapeInteger, figureout.ShapeNumber, figureout.ShapeString:
+		return true
+	default:
+		return false
+	}
+}
+
+func shapeNames(accepts []figureout.Shape) string {
+	names := make([]string, 0, len(accepts))
+	for _, s := range accepts {
+		names = append(names, s.Kind.String())
+	}
+	return strings.Join(names, " or ")
 }
 
 // shorthand binds the scalar spelling of an object field.
