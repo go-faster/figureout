@@ -252,6 +252,11 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 			for _, variant := range f.Type.Union.Variants {
 				p.object(variant.Object, own)
 			}
+		case isCollection(f):
+			// A list or map of objects has no spelling here. An index
+			// convention would be a second, worse way to write the same
+			// configuration, so the field is simply not read from this source.
+			continue
 		case f.Type.Object != nil:
 			// An object has no spelling here, so a ScalarOr field binds its
 			// scalar alternative at the object's own name; its members still
@@ -280,6 +285,13 @@ func (p *planner) add(e entry) {
 		p.byName[n] = e.path
 	}
 	p.out = append(p.out, e)
+}
+
+// isCollection reports whether a field is a list or map of described objects,
+// which this source cannot express.
+func isCollection(f *figureout.FieldModel) bool {
+	_, ok := f.Elements()
+	return ok
 }
 
 // segmentOf returns the field's own name segment, which [Name] replaces.

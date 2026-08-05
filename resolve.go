@@ -151,7 +151,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		secrets: map[string]struct{}{},
 	}
 
-	state := map[string]*merged{}
+	res := newResolution()
 	for _, src := range sources {
 		if src == nil {
 			continue
@@ -164,15 +164,15 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 			continue
 		}
 		rep.Diagnostics = append(rep.Diagnostics, layer.Diagnostics...)
-		d.model.fold(state, layer, rep)
+		d.model.fold(res, layer, rep)
 	}
-	d.model.applyMoved(state, rep)
+	d.model.applyMoved(res.values, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		return cfg, rep, err
 	}
 
-	values := make(map[string]Assignment, len(state))
-	for path, st := range state {
+	values := make(map[string]Assignment, len(res.values))
+	for path, st := range res.values {
 		if st.erased != nil {
 			rep.erased[path] = *st.erased
 		}
@@ -182,7 +182,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 	}
 
 	rv := reflect.ValueOf(&cfg).Elem()
-	d.model.materialize(d.model.Root, rv, values, rep)
+	d.model.materialize(d.model.Root, rv, "", values, res, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		var zero T
 		return zero, rep, err
@@ -200,7 +200,10 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 
 // fold merges one layer into the accumulated state, honoring each field's
 // merge policy.
-func (m *Model) fold(state map[string]*merged, layer *Layer, rep *Report) {
+func (m *Model) fold(res *resolution, layer *Layer, rep *Report) {
+	res.startLayer()
+	state := res.values
+
 	for _, a := range layer.Assignments {
 		if a.State == ValueMissing {
 			continue
@@ -210,6 +213,12 @@ func (m *Model) fold(state map[string]*merged, layer *Layer, rep *Report) {
 		var f *FieldModel
 		if found, ok := m.FieldByPath(a.Path); ok {
 			f, policy = found, found.Merge
+		}
+
+		if handled, path := m.foldCollection(res, a, f, rep); handled {
+			continue
+		} else if path != "" {
+			a.Path = path
 		}
 
 		// A [ScalarOr] field written both ways does not merge: the two
@@ -301,32 +310,105 @@ func selectedVariant(f *FieldModel, v reflect.Value) (*VariantModel, reflect.Val
 	return nil, reflect.Value{}, false
 }
 
-func (m *Model) materialize(o *ObjectModel, v reflect.Value, values map[string]Assignment, rep *Report) {
+// materialize writes an object's fields.
+//
+// base is the path the values were folded under, which is the field's model
+// path everywhere except inside a collection, where it names one element.
+func (m *Model) materialize(
+	o *ObjectModel,
+	v reflect.Value,
+	base string,
+	values map[string]Assignment,
+	res *resolution,
+	rep *Report,
+) {
 	for _, f := range o.Fields {
 		if f.movedTo != nil {
 			// A former spelling never reaches the Go value: applyMoved has
 			// already redirected whatever it carried.
 			continue
 		}
-		switch {
+		path := base + f.Name
+		switch _, collection := f.Elements(); {
 		case f.Type.Union != nil:
-			m.materializeUnion(f, v, values, rep)
+			m.materializeUnion(f, v, path, values, res, rep)
+		case collection:
+			m.materializeCollection(f, v, path, values, res, rep)
 		case f.Type.Object != nil:
 			// A [ScalarOr] field written as a scalar carries a value of its
 			// own, which stands for the whole object.
-			if a, ok := values[f.Path]; ok && a.State == ValuePresent {
-				m.materializeShorthand(f, v, a, rep)
+			if a, ok := values[path]; ok && a.State == ValuePresent {
+				m.materializeShorthand(f, v, path, a, rep)
 				continue
 			}
-			m.materialize(f.Type.Object, v.FieldByIndex(f.GoPath.Index), values, rep)
+			m.materialize(f.Type.Object, v.FieldByIndex(f.GoPath.Index), path+".", values, res, rep)
 		default:
-			m.materializeLeaf(f, v, values, rep)
+			m.materializeLeaf(f, v, path, values, rep)
 		}
 	}
 }
 
-func (m *Model) materializeUnion(f *FieldModel, v reflect.Value, values map[string]Assignment, rep *Report) {
-	path, _ := DiscriminatorPath(f)
+// materializeCollection builds a list or map of objects out of the element
+// paths its elements folded under.
+func (m *Model) materializeCollection(
+	f *FieldModel,
+	v reflect.Value,
+	path string,
+	values map[string]Assignment,
+	res *resolution,
+	rep *Report,
+) {
+	elem, _ := f.Elements()
+	c, ok := res.collections[path]
+	if !ok || !c.provided {
+		m.applyDefault(f, v, path, rep)
+		return
+	}
+
+	out := reflect.New(f.Type.Go).Elem()
+	if f.Type.Kind == TypeMap {
+		out.Set(reflect.MakeMapWithSize(f.Type.Go, len(c.order)))
+	} else {
+		out.Set(reflect.MakeSlice(f.Type.Go, 0, len(c.order)))
+	}
+
+	for _, sub := range c.order {
+		ev := reflect.New(f.Type.Elem.Go).Elem()
+		m.materialize(elem, ev, ElementPath(path, sub)+".", values, res, rep)
+
+		if f.Type.Kind != TypeMap {
+			out.Set(reflect.Append(out, ev))
+			continue
+		}
+		key, err := parseKey(*f.Type.Key, sub)
+		if err != nil {
+			rep.diag(f, path, &c.origin, CodeConstraintMismatch,
+				fmt.Sprintf("entry key %q: %s", sub, err))
+			continue
+		}
+		out.SetMapIndex(reflect.ValueOf(key), ev)
+	}
+
+	if err := f.Validate(out.Interface()); err != nil {
+		rep.diag(f, path, &c.origin, CodeConstraintMismatch, err.Error())
+		return
+	}
+	if err := f.acc.set(v, out.Interface()); err != nil {
+		rep.diag(f, path, &c.origin, CodeConstraintMismatch, err.Error())
+		return
+	}
+	rep.origins[path] = c.origin
+}
+
+func (m *Model) materializeUnion(
+	f *FieldModel,
+	v reflect.Value,
+	base string,
+	values map[string]Assignment,
+	res *resolution,
+	rep *Report,
+) {
+	path := base + "." + f.Type.Union.Discriminator
 	a, ok := values[path]
 	if !ok || a.State != ValuePresent {
 		rep.Diagnostics.errorf(CodeMissingDefinition, f.GoName, path,
@@ -343,7 +425,7 @@ func (m *Model) materializeUnion(f *FieldModel, v reflect.Value, values map[stri
 		nv := reflect.New(fv.Type().Elem())
 		fv.Set(nv)
 		rep.origins[path] = a.Origin
-		m.materialize(variant.Object, nv.Elem(), values, rep)
+		m.materialize(variant.Object, nv.Elem(), base+".", values, res, rep)
 		return
 	}
 
@@ -363,47 +445,53 @@ func (m *Model) materializeUnion(f *FieldModel, v reflect.Value, values map[stri
 
 // materializeShorthand widens the scalar spelling of a [ScalarOr] field and
 // assigns the whole object.
-func (m *Model) materializeShorthand(f *FieldModel, v reflect.Value, a Assignment, rep *Report) {
+func (m *Model) materializeShorthand(f *FieldModel, v reflect.Value, path string, a Assignment, rep *Report) {
 	if f.widen == nil {
-		rep.diag(f, &a.Origin, CodeSourceUnsupported, "cannot assign a value to an object")
+		rep.diag(f, path, &a.Origin, CodeSourceUnsupported, "cannot assign a value to an object")
 		return
 	}
 	value, err := f.widen(a.Value)
 	if err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		rep.diag(f, path, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
 		return
 	}
 	if err := f.acc.set(v, value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		rep.diag(f, path, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
 		return
 	}
-	rep.origins[f.Path] = a.Origin
+	rep.origins[path] = a.Origin
 	if f.Meta.Secret {
-		rep.secrets[f.Path] = struct{}{}
+		rep.secrets[path] = struct{}{}
 	}
 }
 
-func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[string]Assignment, rep *Report) {
-	a, ok := values[f.Path]
+func (m *Model) materializeLeaf(
+	f *FieldModel,
+	v reflect.Value,
+	path string,
+	values map[string]Assignment,
+	rep *Report,
+) {
+	a, ok := values[path]
 	if !ok || a.State == ValueMissing {
-		m.applyDefault(f, v, rep)
+		m.applyDefault(f, v, path, rep)
 		return
 	}
 
 	value, err := convertValue(f.Type.Go, a.Value)
 	if err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
+		rep.diag(f, path, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), a.Value))
 		return
 	}
 	if err := f.Validate(value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
+		rep.diag(f, path, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
 		return
 	}
 	if err := f.acc.set(v, value); err != nil {
-		rep.diag(f, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
+		rep.diag(f, path, &a.Origin, CodeConstraintMismatch, Redact(f, err.Error(), value, a.Value))
 		return
 	}
-	rep.origins[f.Path] = a.Origin
+	rep.origins[path] = a.Origin
 	if f.Meta.Secret {
 		rep.secrets[f.Path] = struct{}{}
 	}
@@ -415,41 +503,41 @@ func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[strin
 			Severity:  SeverityWarning,
 			Code:      CodeDeprecated,
 			Message:   f.Meta.Deprecated,
-			FieldPath: f.Path,
+			FieldPath: path,
 			GoPath:    f.GoName,
 			Origin:    &origin,
 		})
 	}
 }
 
-func (m *Model) applyDefault(f *FieldModel, v reflect.Value, rep *Report) {
+func (m *Model) applyDefault(f *FieldModel, v reflect.Value, path string, rep *Report) {
 	if f.Default != nil && f.Default.Applied {
 		value, err := convertValue(f.Type.Go, f.Default.Value)
 		if err != nil {
-			rep.diag(f, nil, CodeDefaultMismatch, err.Error())
+			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
 			return
 		}
 		if err := f.acc.set(v, value); err != nil {
-			rep.diag(f, nil, CodeDefaultMismatch, err.Error())
+			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
 			return
 		}
-		rep.origins[f.Path] = Origin{Source: "default"}
+		rep.origins[path] = Origin{Source: "default"}
 		if f.Meta.Secret {
-			rep.secrets[f.Path] = struct{}{}
+			rep.secrets[path] = struct{}{}
 		}
 		return
 	}
 	if f.Presence == PresenceRequired {
-		rep.diag(f, nil, CodeMissingDefinition, "no value provided and no default")
+		rep.diag(f, path, nil, CodeMissingDefinition, "no value provided and no default")
 	}
 }
 
-func (r *Report) diag(f *FieldModel, origin *Origin, code, msg string) {
+func (r *Report) diag(f *FieldModel, path string, origin *Origin, code, msg string) {
 	r.Diagnostics = append(r.Diagnostics, Diagnostic{
 		Severity:  SeverityError,
 		Code:      code,
 		Message:   msg,
-		FieldPath: f.Path,
+		FieldPath: path,
 		GoPath:    f.GoName,
 		Origin:    origin,
 	})

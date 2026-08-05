@@ -91,6 +91,10 @@ type FieldModel struct {
 	// field registered with [ScalarOr].
 	widen func(any) (any, error)
 
+	// mergeKey is the element field identifying a list element across layers,
+	// for a list registered with [ListField.MergeByKey].
+	mergeKey *FieldModel
+
 	acc accessor
 }
 
@@ -131,8 +135,19 @@ type Model struct {
 func (m *Model) Fields() []*FieldModel { return m.fields }
 
 // FieldByPath looks up a field by canonical dotted path.
+//
+// A concrete element path resolves to the field describing every element, so
+// "sites[0].max_bytes" and "sites[name=docs].max_bytes" both find
+// "sites[].max_bytes".
 func (m *Model) FieldByPath(path string) (*FieldModel, bool) {
-	f, ok := m.byPath[path]
+	if f, ok := m.byPath[path]; ok {
+		return f, true
+	}
+	canonical := CanonicalPath(path)
+	if canonical == path {
+		return nil, false
+	}
+	f, ok := m.byPath[canonical]
 	return f, ok
 }
 
@@ -161,6 +176,9 @@ func (m *Model) reindex() {
 				for _, v := range f.Type.Union.Variants {
 					walk(v.Object)
 				}
+			}
+			if elem, ok := collectionOf(f); ok {
+				walk(elem)
 			}
 		}
 	}

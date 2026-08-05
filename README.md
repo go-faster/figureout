@@ -222,6 +222,75 @@ function, because registering descendants already covers the parent:
 figureout.Value(s, &c.Database.DSN, "dsn")   // Config.Database.DSN, spelled "dsn"
 ```
 
+## Lists and maps of objects
+
+The lists in a configuration file are the part an operator actually edits, and
+describing their elements is what gives them names, defaults, constraints,
+provenance and a schema:
+
+```go
+figureout.ListOf(s, &c.Sites, "sites", func(e *Site, s *figureout.Schema[Site]) {
+	figureout.Value(s, &e.Name, "name").NonEmpty()
+	figureout.Value(s, &e.MaxBytes, "max_bytes").ApplyDefault(0)
+})
+
+figureout.MapOf(s, &c.Proxies, "proxies", describeProxy).MergeByKey()
+figureout.List(s, &c.Projects, "projects", ProjectDescriptor)   // shared elements
+```
+
+**Each element binds to a path of its own**, so nothing about collections is
+special: merging, defaults, validation, `report.OriginOf` and null-erasure are
+the same per-path machinery everything else uses.
+
+```text
+sites[0].max_bytes          an unkeyed list, by position
+sites[name=docs].max_bytes  a list merged by key
+proxies[gitlab].url         a map, by key
+```
+
+A list of structs that nobody described is a **derivation** error naming
+`ListOf`, rather than a descriptor that compiles clean and fails at resolve
+time.
+
+### Merging elements
+
+Merging needs to know which element in a later layer is which in an earlier one,
+and a list does not carry that. So the policy says where identity comes from:
+
+| | Identity | A later layer can |
+| --- | --- | --- |
+| `MergeReplace` (default) | none needed | replace the whole list |
+| `MergeAppend` | none needed | add elements |
+| `MergeByKey("name")` | an element field | edit, and add |
+
+```go
+figureout.ListOf(s, &c.Sites, "sites", describeSite).MergeByKey("name")
+```
+
+```yaml
+# base.yaml            # override.yaml        # result
+sites:                 sites:                 sites:
+  - name: docs           - name: docs           - name: docs
+    max_bytes: 10            max_bytes: 20          max_bytes: 20
+  - name: wiki                                  - name: wiki
+    max_bytes: 10                                   max_bytes: 10
+```
+
+Fields merge individually, so a later layer changes only what it names.
+Positions deliberately do **not** merge: `sites[0]` in two files is the same
+element only by accident, and prepending one entry would otherwise re-target
+every override silently.
+
+Keying a list makes its key field mandatory, and repeating a key within one
+layer is an error rather than last-wins. Base order is preserved and unseen keys
+are appended, so a later layer cannot reorder — do not key a list whose order is
+meaningful. A map already identifies its entries, so `MergeByKey()` there takes
+no argument, and `gitlab: null` removes an entry.
+
+Environment variables and mounted files cannot express a collection of objects
+and simply skip the field. An index convention would be a second, worse way to
+write the same configuration.
+
 ## Presence
 
 Presence is spelled by the registration function, and the value type is
@@ -572,8 +641,8 @@ duplicate.
 TOML and flag sources; CUE source and schema output; generated documentation;
 code generation; optimized unsafe accessors. `ScalarOr` covers a field, not yet
 a list element: `projects: [group/docs]` alongside `[{ref: group/docs}]` still
-needs a decoder, because binding a whole object into a Go value from inside a
-list is a code path the tree binder does not have.
+needs a decoder. Invariants are declared on the configuration that owns a list,
+not on its elements.
 
 ## Development
 
