@@ -182,6 +182,14 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		var zero T
 		return zero, rep, err
 	}
+
+	// Cross-field rules run last, on a configuration whose every field already
+	// resolved and validated, so a violation is never a knock-on effect.
+	d.checkInvariants(rv, rep)
+	if err := rep.Diagnostics.Err(); err != nil {
+		var zero T
+		return zero, rep, err
+	}
 	return cfg, rep, nil
 }
 

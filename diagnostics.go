@@ -43,6 +43,7 @@ const (
 	CodeUnionInvalid        = "union.invalid"
 	CodeDeprecated          = "field.deprecated"
 	CodeMovedConflict       = "field.moved_conflict"
+	CodeInvariantViolated   = "invariant.violated"
 	CodeValidatorNotExport  = "validator.not_exportable"
 )
 

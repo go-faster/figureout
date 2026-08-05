@@ -115,8 +115,9 @@ func (f *FieldModel) Validate(v any) error {
 type Model struct {
 	Root *ObjectModel
 
-	fields []*FieldModel
-	byPath map[string]*FieldModel
+	fields     []*FieldModel
+	byPath     map[string]*FieldModel
+	invariants []InvariantModel
 }
 
 // Fields returns every field in the model, including nested ones, in
@@ -164,7 +165,8 @@ func (m *Model) reindex() {
 //
 // It is safe for concurrent use. Build one with [Derive] or [MustDerive].
 type Descriptor[T any] struct {
-	model *Model
+	model      *Model
+	invariants []invariant
 }
 
 // Model returns the compiled model. The returned value must not be mutated.

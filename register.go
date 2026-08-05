@@ -111,6 +111,7 @@ func describeNested[C any](b *builder, reg *registration, describe func(*C, *Sch
 	describe(rv.Addr().Interface().(*C), &Schema[C]{b: nb})
 	obj := nb.compile()
 	b.diags = append(b.diags, nb.diags...)
+	b.invariants = append(b.invariants, lift(nb.invariants, reg.name, reg.bound.index)...)
 	return obj
 }
 

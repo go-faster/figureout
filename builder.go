@@ -134,9 +134,10 @@ type builder struct {
 	bind     *binder
 	// stack is the open containers, outermost first. It always holds at least
 	// the root container.
-	stack []*container
-	diags Diagnostics
-	opts  schemaOptions
+	stack      []*container
+	invariants []invariant
+	diags      Diagnostics
+	opts       schemaOptions
 }
 
 // newBuilder starts a builder over an addressable struct value. goPath prefixes
@@ -203,9 +204,12 @@ func Derive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) (*Descri
 	}
 
 	model := &Model{Root: obj}
+	for _, inv := range b.invariants {
+		model.invariants = append(model.invariants, InvariantModel{Name: inv.name})
+	}
 	prefixPaths(obj, "")
 	model.reindex()
-	return &Descriptor[T]{model: model}, nil
+	return &Descriptor[T]{model: model, invariants: b.invariants}, nil
 }
 
 // MustDerive is like [Derive] but panics on error.

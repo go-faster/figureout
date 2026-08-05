@@ -321,6 +321,39 @@ strings, with their defaults and bounds spelled the way a source accepts them.
 Because the duration spelling keeps working, migrating away is two safe steps:
 add the unit, then add the duration-spelled key and deprecate the old one.
 
+## Cross-field invariants
+
+Constraints are per field; real configurations are full of rules that are not.
+`Invariant` gives them somewhere to live that keeps the provenance the
+descriptor already has:
+
+```go
+figureout.Invariant(s, "proxy-exists", func(c *Config) error {
+	for i, site := range c.Fetch.Sites {
+		if _, ok := c.Proxies[site.Proxy]; !ok {
+			return figureout.At(fmt.Sprintf("fetch.sites[%d].proxy", i)).
+				Errorf("no proxy named %q is configured", site.Proxy)
+		}
+	}
+	return nil
+})
+```
+
+```text
+fetch.sites[0].proxy: no proxy named "gitlab" is configured
+  source: config.yaml:41:5
+```
+
+Invariants run last, on a configuration whose every field already resolved and
+validated, so a violation is never a knock-on effect of an error already
+reported. `At` attaches the paths a rule is about — an element path resolves to
+its nearest field for provenance — and `errors.Join` reports several violations
+as several diagnostics. A plain `error` works too, without a path.
+
+A rule is a Go function, so no target can emit it; `model.Invariants()` lists
+the names so generated documentation can say a rule exists that the schema does
+not describe.
+
 ## Deprecating and moving a key
 
 `Deprecated` is metadata, and metadata alone tells an operator nothing. Setting
