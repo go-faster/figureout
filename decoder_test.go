@@ -151,3 +151,31 @@ func TestDecoderIsPerSource(t *testing.T) {
 	require.Equal(t, "plain", cfg.Token)
 	require.Zero(t, called)
 }
+
+type opaqueThing struct{ A, B string }
+
+type opaqueDecoder struct{}
+
+func (opaqueDecoder) DecodeValue(raw any) (any, error) {
+	m, _ := raw.(map[string]any)
+	a, _ := m["a"].(string)
+	b, _ := m["b"].(string)
+	return opaqueThing{A: a, B: b}, nil
+}
+
+type opaqueConfig struct{ Thing opaqueThing }
+
+func TestDecoderOwnsItsShape(t *testing.T) {
+	// A struct whose shape belongs to its decoder needs no Object description:
+	// requiring one would reject a field that resolves perfectly well.
+	d, err := figureout.Derive(func(c *opaqueConfig, s *figureout.Schema[opaqueConfig]) {
+		figureout.Value(s, &c.Thing, "thing",
+			figureout.WithDecoder(yaml.Source, opaqueDecoder{},
+				figureout.Shape{Kind: figureout.ShapeObject}))
+	})
+	require.NoError(t, err)
+
+	cfg, _, err := d.Resolve(yaml.Bytes([]byte("thing:\n  a: x\n  b: y\n")))
+	require.NoError(t, err)
+	require.Equal(t, opaqueThing{A: "x", B: "y"}, cfg.Thing)
+}

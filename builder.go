@@ -437,16 +437,19 @@ func (b *builder) validateField(f *FieldModel) {
 				"default of type %s is not assignable to %s", dt, f.Type.Go)
 		}
 	}
-	if elem := f.Type.Elem; elem != nil && elem.Kind == TypeObject && elem.Object == nil {
-		// Deriving clean and failing at resolve time is the wrong end to fail
-		// at: a descriptor that cannot possibly work should not compile.
-		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
-			"elements of %q are objects with no description; register it with %s",
-			f.Name, collectionRegistrars(f.Type.Kind))
-	}
-	if f.Type.Kind == TypeObject && f.Type.Object == nil && f.Type.Union == nil {
-		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
-			"%q is an object with no description; register it with Object or ObjectFunc", f.Name)
+	// Deriving clean and failing at resolve time is the wrong end to fail at: a
+	// descriptor that cannot possibly work should not compile. A field that
+	// installed its own decoder owns its shape, so it describes itself.
+	if !decoded(f) {
+		if elem := f.Type.Elem; elem != nil && elem.Kind == TypeObject && elem.Object == nil {
+			b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
+				"elements of %q are objects with no description; register it with %s",
+				f.Name, collectionRegistrars(f.Type.Kind))
+		}
+		if f.Type.Kind == TypeObject && f.Type.Object == nil && f.Type.Union == nil {
+			b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
+				"%q is an object with no description; register it with Object or ObjectFunc", f.Name)
+		}
 	}
 	// A keyed list merges by key exactly as a map does; without a key, by-key
 	// has nothing to identify an element with.
@@ -459,6 +462,17 @@ func (b *builder) validateField(f *FieldModel) {
 		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
 			"%s is unexported and cannot be assigned; ignore it instead", f.GoName)
 	}
+}
+
+// decoded reports whether any source decodes the field itself, in which case
+// the shape it accepts is the decoder's business rather than the model's.
+func decoded(f *FieldModel) bool {
+	for _, p := range f.Sources {
+		if p.Decoder != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func collectionRegistrars(k TypeKind) string {
