@@ -73,8 +73,25 @@ type FieldModel struct {
 	Sources map[SourceID]*SourceProjection
 	Targets map[TargetID][]any
 
+	// MovedFrom lists the former paths of the field, relative to the
+	// descriptor that declares it. Each appears in the model as a deprecated
+	// shadow field carrying [FieldModel.MovedTo].
+	MovedFrom []string
+	// MovedTo is the canonical path superseding this field, set on the shadow
+	// fields [MovedFrom] creates. It is empty for a field of its own.
+	MovedTo string
+
+	// movedTo is the shadowed field. It is the identity behind MovedTo, which
+	// is only a path.
+	movedTo *FieldModel
+
 	acc accessor
 }
+
+// Moved reports whether the field is a deprecated former spelling of another
+// one. A moved field is never materialized: its value is redirected to
+// [FieldModel.MovedTo] during resolution.
+func (f *FieldModel) Moved() bool { return f.movedTo != nil }
 
 // Source returns the projection of the field for the given source.
 func (f *FieldModel) Source(id SourceID) (*SourceProjection, bool) {
@@ -122,6 +139,14 @@ func (m *Model) reindex() {
 			f.ID = FieldID(len(m.fields))
 			m.fields = append(m.fields, f)
 			m.byPath[f.Path] = f
+			if f.movedTo != nil {
+				// Paths are assigned by the time reindex runs, so this is where
+				// a shadow can finally name what superseded it.
+				f.MovedTo = f.movedTo.Path
+				if f.Meta.Deprecated == "" {
+					f.Meta.Deprecated = "moved to " + f.MovedTo
+				}
+			}
 			switch {
 			case f.Type.Object != nil:
 				walk(f.Type.Object)

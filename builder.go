@@ -97,6 +97,7 @@ type registration struct {
 	meta        Metadata
 	def         *Default
 	merge       MergePolicy
+	movedFrom   []string
 	constraints []Constraint
 	sources     map[SourceID]*SourceProjection
 	targets     map[TargetID][]any
@@ -308,6 +309,7 @@ func (b *builder) compile() *ObjectModel {
 	handled := map[string]*registration{}
 	root := b.compileContainer(b.stack[0], handled)
 	b.checkCompleteness(handled)
+	b.placeMoved(root)
 	return root
 }
 
@@ -375,6 +377,7 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 			Constraints: reg.constraints,
 			Sources:     reg.sources,
 			Targets:     reg.targets,
+			MovedFrom:   reg.movedFrom,
 			acc:         reg.acc,
 		}
 		if reg.object != nil {

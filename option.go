@@ -41,6 +41,8 @@ type FieldOptionContext interface {
 	AddTargetAnnotation(TargetID, any) error
 	// SetUnit scales bare numbers written for a duration field.
 	SetUnit(time.Duration) error
+	// AddMovedFrom records a former path of the field.
+	AddMovedFrom(string) error
 
 	// SetSourceNames sets the primary name and aliases for a source.
 	SetSourceNames(SourceID, ...string) error
@@ -95,6 +97,14 @@ func (c *fieldContext) SetUnit(u time.Duration) error {
 		return errors.Errorf("a unit applies to a duration field, not to a %s one", c.reg.typ.Kind)
 	}
 	c.reg.typ.Unit = u
+	return nil
+}
+
+func (c *fieldContext) AddMovedFrom(path string) error {
+	if path == "" {
+		return errors.New("empty former path")
+	}
+	c.reg.movedFrom = append(c.reg.movedFrom, path)
 	return nil
 }
 
@@ -235,7 +245,43 @@ func Doc(text string) FieldOption {
 	})
 }
 
+// MovedFrom accepts a former path of the field and reports its use.
+//
+// [Deprecated] is metadata: it says a key is going away without doing anything
+// when the key is set. MovedFrom is the behavior a configuration actually needs
+// while it is being reshaped:
+//
+//		figureout.Value(s, &c.HTTPAddr, "http_addr", figureout.MovedFrom("addr"))
+//
+//	  - the old spelling still resolves, with a [SeverityWarning] diagnostic in
+//	    the [Report] naming both paths
+//	  - setting both spellings is a [SeverityError], not a precedence rule: two
+//	    spellings in one configuration are two intentions, and silently picking
+//	    one is the worst available answer
+//	  - the old path appears in generated schemas as a deprecated property
+//
+// The path is relative to the descriptor that declares the field, so it may
+// name a former level: MovedFrom("legacy.addr") reads the old nesting. Levels
+// that no longer exist are synthesized as deprecated objects; a level that is a
+// nested descriptor of its own is reported rather than modified.
+func MovedFrom(paths ...string) FieldOption {
+	return FieldOptionFunc(func(c FieldOptionContext) error {
+		if len(paths) == 0 {
+			return errors.New("no former paths given")
+		}
+		for _, p := range paths {
+			if err := c.AddMovedFrom(p); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Deprecated marks a field as deprecated with a reason.
+//
+// Setting a deprecated field is reported as a [SeverityWarning] diagnostic in
+// the [Report]. To also accept a former spelling, use [MovedFrom].
 func Deprecated(reason string) FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
 		return c.AddMetadata(Metadata{Deprecated: reason})

@@ -321,6 +321,36 @@ strings, with their defaults and bounds spelled the way a source accepts them.
 Because the duration spelling keeps working, migrating away is two safe steps:
 add the unit, then add the duration-spelled key and deprecate the old one.
 
+## Deprecating and moving a key
+
+`Deprecated` is metadata, and metadata alone tells an operator nothing. Setting
+a deprecated key now lands a `SeverityWarning` in `report.Diagnostics`, with the
+origin that set it, so a binary can say "you are using a key that is going away"
+and still start.
+
+`MovedFrom` is the behavior a configuration needs while it is being reshaped:
+
+```go
+figureout.Group(s, "api", func(s *figureout.Schema[Config]) {
+	figureout.Value(s, &c.HTTPAddr, "http_addr",
+		figureout.MovedFrom("http_addr", "legacy.addr"))
+})
+```
+
+- the old spelling still resolves, with a warning naming both paths
+- setting **both** spellings is an error, not a precedence rule — two spellings
+  in one configuration are two intentions, and silently picking one is the worst
+  available answer. `report.OriginOf` answers "was this set?" correctly, so
+  setting the new key explicitly to its default value alongside the old one is
+  caught too
+- the old path appears in generated schemas as a deprecated property, never as
+  a second field; a level that no longer exists is rebuilt as a deprecated
+  object, so old nesting keeps parsing
+
+The path is relative to the declaring descriptor, so it can name a former level.
+A former path that runs through a nested descriptor rather than a group is
+reported at derivation, because that descriptor may be shared.
+
 ## Enum and OneOf
 
 The two are separate concepts, and the API keeps them apart.

@@ -161,6 +161,7 @@ func (d *Descriptor[T]) ResolveContext(ctx context.Context, sources ...Source) (
 		rep.Diagnostics = append(rep.Diagnostics, layer.Diagnostics...)
 		d.model.fold(state, layer, rep)
 	}
+	d.model.applyMoved(state, rep)
 	if err := rep.Diagnostics.Err(); err != nil {
 		return cfg, rep, err
 	}
@@ -250,6 +251,9 @@ func (m *Model) lookup(root reflect.Value, path string) (*FieldModel, reflect.Va
 			return nil, reflect.Value{}, false
 		}
 		if !nested {
+			if f.movedTo != nil {
+				return nil, reflect.Value{}, false
+			}
 			return f, v, true
 		}
 		switch {
@@ -281,6 +285,11 @@ func selectedVariant(f *FieldModel, v reflect.Value) (*VariantModel, reflect.Val
 
 func (m *Model) materialize(o *ObjectModel, v reflect.Value, values map[string]Assignment, rep *Report) {
 	for _, f := range o.Fields {
+		if f.movedTo != nil {
+			// A former spelling never reaches the Go value: applyMoved has
+			// already redirected whatever it carried.
+			continue
+		}
 		switch {
 		case f.Type.Union != nil:
 			m.materializeUnion(f, v, values, rep)
@@ -349,6 +358,19 @@ func (m *Model) materializeLeaf(f *FieldModel, v reflect.Value, values map[strin
 		return
 	}
 	rep.origins[f.Path] = a.Origin
+
+	// Deprecation is worth nothing to an operator unless using the key says so.
+	if f.Meta.Deprecated != "" {
+		origin := a.Origin
+		rep.Diagnostics = append(rep.Diagnostics, Diagnostic{
+			Severity:  SeverityWarning,
+			Code:      CodeDeprecated,
+			Message:   f.Meta.Deprecated,
+			FieldPath: f.Path,
+			GoPath:    f.GoName,
+			Origin:    &origin,
+		})
+	}
 }
 
 func (m *Model) applyDefault(f *FieldModel, v reflect.Value, rep *Report) {
