@@ -170,6 +170,15 @@ func Derive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) (*Descri
 // MustDerive is like [Derive] but panics on error.
 //
 // The panic message contains every compilation diagnostic, not only the first.
+//
+// A failed derivation is a programming error, so a package-level
+// "var ConfigDescriptor = figureout.MustDerive(...)" is the intended idiom for
+// a library. A binary that would rather report the failure than crash in init
+// should derive inside its own loader instead:
+//
+//	var descriptor = sync.OnceValues(func() (*figureout.Descriptor[Config], error) {
+//		return figureout.Derive(describe)
+//	})
 func MustDerive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) *Descriptor[T] {
 	d, err := Derive(describe, opts...)
 	if err != nil {

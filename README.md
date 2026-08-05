@@ -65,6 +65,41 @@ provenance:
   server.timeout       yaml server.timeout examples/service/config.yaml:10:3
 ```
 
+## Deriving a descriptor
+
+`Derive` compiles the whole model before returning, so every mistake in a
+description — a mistyped registration, a duplicate name, an unregistered field —
+surfaces at once, as diagnostics. `MustDerive` turns them into a panic carrying
+the same list.
+
+Which one to use is a question of *where the failure should appear*, and the
+answer differs by program shape:
+
+```go
+// A library: a broken descriptor is a programming error, and a panic in init
+// is the right way to report one. This is the idiom the examples use.
+var ConfigDescriptor = figureout.MustDerive(describe)
+
+// A service: derive once, on the path that can report an error and exit 1.
+var descriptor = sync.OnceValues(func() (*figureout.Descriptor[Config], error) {
+	return figureout.Derive(describe)
+})
+
+func Load(paths ...string) (Config, *figureout.Report, error) {
+	d, err := descriptor()
+	if err != nil {
+		return Config{}, nil, errors.Wrap(err, "descriptor")
+	}
+	return d.Resolve(yaml.File(paths[0]), env.Current(env.Prefix("APP_")))
+}
+```
+
+`sync.OnceValues` keeps the compile-once property of a package variable while
+moving the failure into `main`, where it prints as a configuration error rather
+than as a crash. For a descriptor with a few hundred registrations that
+difference is worth the four extra lines; below that, the package variable is
+fine either way.
+
 ## Packages
 
 | Package | Contents |
