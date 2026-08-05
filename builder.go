@@ -78,11 +78,15 @@ const (
 	regObject
 	regUnion
 	regIgnore
+	regGroup
 )
 
 // registration is one recorded declaration, before compilation.
 type registration struct {
-	kind   regKind
+	kind regKind
+	// valid is false once the declaration has been reported as broken; the
+	// fluent builder then turns into a no-op instead of panicking.
+	valid  bool
 	name   string
 	goName string
 	bound  bound
@@ -101,9 +105,20 @@ type registration struct {
 	recursive bool
 	reason    string
 
-	// Object and union payloads.
+	// Object, union and group payloads.
 	object *ObjectModel
 	union  *Union
+	group  *container
+}
+
+// container is one level of the configuration path.
+//
+// Every registration in a container binds a Go field of the same struct: a
+// [Group] opens a path level without opening a Go one, so its members stay
+// relative to the builder root and the synthetic object field that carries them
+// has an empty Go index.
+type container struct {
+	regs []*registration
 }
 
 // builder accumulates registrations for one struct.
@@ -114,10 +129,13 @@ type registration struct {
 type builder struct {
 	rootType reflect.Type
 	root     reflect.Value
+	goPath   string
 	bind     *binder
-	regs     []*registration
-	diags    Diagnostics
-	opts     schemaOptions
+	// stack is the open containers, outermost first. It always holds at least
+	// the root container.
+	stack []*container
+	diags Diagnostics
+	opts  schemaOptions
 }
 
 // newBuilder starts a builder over an addressable struct value. goPath prefixes
@@ -126,9 +144,17 @@ func newBuilder(root reflect.Value, goPath string, opts schemaOptions) *builder 
 	return &builder{
 		rootType: root.Type(),
 		root:     root,
+		goPath:   goPath,
 		bind:     newBinder(root, goPath),
+		stack:    []*container{{}},
 		opts:     opts,
 	}
+}
+
+// add records a declaration in the innermost open container.
+func (b *builder) add(reg *registration) {
+	c := b.stack[len(b.stack)-1]
+	c.regs = append(c.regs, reg)
 }
 
 // Schema is the mutable registration builder for T.
@@ -227,7 +253,8 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 	reg.acc.elem = elem
 
 	if kind == regIgnore {
-		b.regs = append(b.regs, reg)
+		reg.valid = true
+		b.add(reg)
 		return reg
 	}
 
@@ -248,7 +275,8 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 		r.apply(reg)
 	}
 
-	b.regs = append(b.regs, reg)
+	reg.valid = true
+	b.add(reg)
 	return reg
 }
 
@@ -277,13 +305,45 @@ func (b *builder) applyOptions(reg *registration, opts []FieldOption) {
 // compile runs the validation phases and produces the object model for the
 // struct this builder describes. Diagnostics accumulate on the builder.
 func (b *builder) compile() *ObjectModel {
-	root := &ObjectModel{Go: b.rootType}
 	handled := map[string]*registration{}
+	root := b.compileContainer(b.stack[0], handled)
+	b.checkCompleteness(handled)
+	return root
+}
+
+// compileContainer turns one path level into an object model. handled is shared
+// across the whole builder, because completeness and duplicate-registration
+// checks are about Go fields, which a group does not nest.
+func (b *builder) compileContainer(c *container, handled map[string]*registration) *ObjectModel {
+	root := &ObjectModel{Go: b.rootType}
 	byName := map[string]*registration{}
 
-	for _, reg := range b.regs {
-		if reg.goName == "" {
+	for _, reg := range c.regs {
+		if !reg.valid {
 			continue // already reported
+		}
+		if reg.kind == regGroup {
+			if prev, ok := byName[reg.name]; ok {
+				b.diags.errorf(CodeDuplicateName, reg.goName, reg.name,
+					"configuration property %q is bound to both %s and a group", reg.name, prev.goName)
+				continue
+			}
+			byName[reg.name] = reg
+			root.Fields = append(root.Fields, &FieldModel{
+				Name:     reg.name,
+				Path:     reg.name,
+				GoName:   b.goPath,
+				Presence: PresenceRequired,
+				Meta:     reg.meta,
+				Targets:  reg.targets,
+				Sources:  reg.sources,
+				Type: Type{
+					Kind:   TypeObject,
+					Go:     b.rootType,
+					Object: b.compileContainer(reg.group, handled),
+				},
+			})
+			continue
 		}
 		if prev, ok := handled[reg.goName]; ok {
 			b.diags.errorf(CodeDuplicateField, reg.goName, reg.name,
@@ -326,8 +386,6 @@ func (b *builder) compile() *ObjectModel {
 		b.validateField(f)
 		root.Fields = append(root.Fields, f)
 	}
-
-	b.checkCompleteness(handled)
 	return root
 }
 

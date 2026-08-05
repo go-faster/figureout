@@ -190,6 +190,37 @@ than a silent binding.
 Use `Object` for a descriptor several parents share or that you want to export,
 and `ObjectFunc` for a section with exactly one parent — which is most of them.
 
+**The configuration path is not welded to the Go nesting.** The shape that reads
+well in a file and the shape consumers want in Go are rarely the same shape, and
+a configuration that has been around a while has both mismatches. `Group` opens
+a path level with no Go struct behind it:
+
+```go
+figureout.Group(s, "webhook", func(s *figureout.Schema[GitLab]) {
+	figureout.Value(s, &c.WebhookEnabled, "enabled").ApplyDefault(false)
+	figureout.Value(s, &c.WebhookSecret, "secret", figureout.Hidden())
+})
+```
+
+```yaml
+webhook:
+  enabled: true
+  secret: hunter2      # GITLAB_WEBHOOK_SECRET
+```
+
+Only the path nests. The fields still bind to the declaring struct, so
+completeness and duplicate registration see exactly what they would have seen
+without the group — registering the same field inside and outside one is still
+a duplicate. A group contributes a segment everywhere a nested object would:
+environment variable names, provenance paths and generated schemas.
+
+The inverse mismatch — a nested Go struct that is flat in the file — needs no
+function, because registering descendants already covers the parent:
+
+```go
+figureout.Value(s, &c.Database.DSN, "dsn")   // Config.Database.DSN, spelled "dsn"
+```
+
 ## Presence
 
 Presence is spelled by the registration function, and the value type is

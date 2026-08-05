@@ -49,7 +49,7 @@ func Optional[R, T any](s *Schema[R], field *OptionalOf[T], name string, opts ..
 func Object[R, C any](s *Schema[R], field *C, name string, d *Descriptor[C], opts ...FieldOption) *ObjectField {
 	b := s.b
 	reg := b.register(unsafe.Pointer(field), reflect.TypeFor[C](), name, regObject)
-	if reg.goName != "" {
+	if reg.valid {
 		switch {
 		case d == nil:
 			b.diags.errorf(CodeMissingDefinition, reg.goName, name, "nil descriptor for nested object %q", name)
@@ -86,7 +86,7 @@ func ObjectFunc[R, C any](
 ) *ObjectField {
 	b := s.b
 	reg := b.register(unsafe.Pointer(field), reflect.TypeFor[C](), name, regObject)
-	if reg.goName != "" {
+	if reg.valid {
 		switch {
 		case describe == nil:
 			b.diags.errorf(CodeMissingDefinition, reg.goName, name,
@@ -170,6 +170,7 @@ func IgnorePath[R any](s *Schema[R], path string, opts ...IgnoreOption) {
 
 	reg := &registration{
 		kind:   regIgnore,
+		valid:  true,
 		bound:  bd,
 		goName: bd.goPath,
 		acc:    accessor{index: bd.index, settable: !bd.skipped},
@@ -180,7 +181,7 @@ func IgnorePath[R any](s *Schema[R], path string, opts ...IgnoreOption) {
 			b.diags.errorf(CodeMissingDefinition, reg.goName, "", "ignore option: %s", err)
 		}
 	}
-	b.regs = append(b.regs, reg)
+	b.add(reg)
 }
 
 // IgnoreRecursivePath ignores a field and its subtree by Go path.
