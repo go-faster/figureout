@@ -30,9 +30,13 @@ that target must keep producing `profile.out`.
 
 - **Null is a merge directive, not a value.** It erases what earlier layers set.
   There is no nullable carrier, and null never reaches the resolved Go value.
-- **Presence picks the function**: `Value` for plain, `Optional` for
-  `OptionalOf[T]`. Element type is inferred from the carrier; constraints are
-  typed as the element.
+- **Presence picks the function**: `Value` or `Explicit` for plain, `Optional`
+  for `OptionalOf[T]`. Element type is inferred from the carrier; constraints
+  are typed as the element.
+- **The function says what absence means**: `Explicit` errors, `Value` resolves
+  to the zero value, a collection resolves to empty. A `Value` whose own
+  constraints reject the zero is a compilation diagnostic, never a silent
+  fallback.
 - **`Enum` is a set of values, `OneOf` is a type sum.** Never conflate them.
   Union tags are laid out inline, as siblings of the variant's members.
 - **Every exported field must be registered, delegated, covered or ignored.**

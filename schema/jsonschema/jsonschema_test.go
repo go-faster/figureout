@@ -48,8 +48,8 @@ type Config struct {
 }
 
 var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[Server]) {
-	figureout.Value(s, &c.Address, "address").NonEmpty().Pattern(`^[a-z0-9.]+$`)
-	figureout.Value(s, &c.Port, "port",
+	figureout.Explicit(s, &c.Address, "address").NonEmpty().Pattern(`^[a-z0-9.]+$`)
+	figureout.Explicit(s, &c.Port, "port",
 		env.Name("PORT"),
 		jsonschema.Decorate(jsonschema.Patch{Examples: []any{8080}}),
 	).InRange(1, 65535)
@@ -144,11 +144,11 @@ var storeDescriptor = figureout.MustDerive(func(c *StoreConfig, s *figureout.Sch
 		figureout.Discriminator("type"),
 		figureout.Variant("s3", &c.Backend.S3,
 			figureout.MustDerive(func(b *S3Backend, s *figureout.Schema[S3Backend]) {
-				figureout.Value(s, &b.Bucket, "bucket").NonEmpty()
+				figureout.Explicit(s, &b.Bucket, "bucket").NonEmpty()
 			})),
 		figureout.Variant("local", &c.Backend.Local,
 			figureout.MustDerive(func(b *LocalBackend, s *figureout.Schema[LocalBackend]) {
-				figureout.Value(s, &b.Path, "path").NonEmpty()
+				figureout.Explicit(s, &b.Path, "path").NonEmpty()
 			})),
 	)
 })
@@ -164,16 +164,22 @@ func TestGenerateUnion(t *testing.T) {
 func TestGenerateForSource(t *testing.T) {
 	type Cfg struct {
 		Port    int
+		Banner  string
 		Timeout figureout.OptionalOf[time.Duration]
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Value(s, &c.Port, "port",
+		figureout.Explicit(s, &c.Port, "port",
 			env.Name("PORT"),
 			figureout.AcceptShapes(env.Source,
 				figureout.Shape{Kind: figureout.ShapeInteger},
 				figureout.Shape{Kind: figureout.ShapeString},
 			),
+		)
+		// Zero-defaulted, so an explicit null has something to fall back on
+		// and the source schema accepts it, as it does for an optional.
+		figureout.Value(s, &c.Banner, "banner",
+			figureout.AcceptShapes(env.Source, figureout.Shape{Kind: figureout.ShapeString}),
 		)
 		// Optional, so an explicit null can erase it; the source schema says
 		// so and the semantic schema does not.

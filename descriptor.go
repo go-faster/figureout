@@ -95,30 +95,45 @@ type FieldModel struct {
 	// for a list registered with [ListField.MergeByKey].
 	mergeKey *FieldModel
 
-	// required records an explicit [FieldBuilder.Required], which only a
-	// collection needs: everything else is required already.
+	// required records an explicit [FieldBuilder.Required].
 	required bool
+
+	// zeroDefault records that absence resolves to the zero value, which is
+	// what [Value] declares and [Explicit] does not.
+	zeroDefault bool
 
 	acc accessor
 }
 
 // Required reports whether a source has to provide the field.
 //
-// A plain field is required unless it carries an applied default. A collection
-// is the exception: an absent list and an empty one are the same statement
-// about the world, so it resolves to empty unless [FieldBuilder.Required] says
-// otherwise.
+// A field registered with [Explicit] is required unless it carries an applied
+// default. A field registered with [Value] is not: its absence resolves to the
+// zero value. A collection is never required by construction, because an absent
+// list and an empty one are the same statement about the world; both it and a
+// zero-defaulted field opt back in with [FieldBuilder.Required].
 func (f *FieldModel) Required() bool {
 	switch {
 	case f.Presence != PresenceRequired:
 		return false
 	case f.Default != nil && f.Default.Applied:
 		return false
+	case f.zeroDefault:
+		return false
 	case f.Type.Kind == TypeList || f.Type.Kind == TypeMap:
 		return f.required
 	default:
 		return true
 	}
+}
+
+// ZeroDefault reports whether absence resolves to the zero value rather than to
+// a diagnostic. It is what [Value] declares and [Explicit] withholds.
+//
+// A field with an applied [Default] never reports true: the default is what
+// absence resolves to, and it is visible as one.
+func (f *FieldModel) ZeroDefault() bool {
+	return f.zeroDefault && (f.Default == nil || !f.Default.Applied)
 }
 
 // Moved reports whether the field is a deprecated former spelling of another

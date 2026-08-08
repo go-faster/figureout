@@ -30,13 +30,13 @@ type crawlConfig struct {
 }
 
 func describeSite(e *site, s *figureout.Schema[site]) {
-	figureout.Value(s, &e.Name, "name").NonEmpty()
+	figureout.Explicit(s, &e.Name, "name").NonEmpty()
 	figureout.Value(s, &e.URLPatterns, "url_patterns").ApplyDefault([]string{})
 	figureout.Value(s, &e.MaxBytes, "max_bytes").ApplyDefault(int64(0))
 }
 
 func describeProxy(e *proxy, s *figureout.Schema[proxy]) {
-	figureout.Value(s, &e.Addr, "addr").NonEmpty()
+	figureout.Explicit(s, &e.Addr, "addr").NonEmpty()
 	figureout.Value(s, &e.TLS, "tls").ApplyDefault(false)
 }
 

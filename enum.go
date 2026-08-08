@@ -30,6 +30,10 @@ type EnumSliceValuer[T any] interface {
 //
 // An enum is a set of allowed values for one type. It is distinct from [OneOf],
 // which selects between alternative shapes.
+//
+// An enum field is required, as [Explicit] is: the zero value of an enumerated
+// type is rarely one of its members, so absence needs a default rather than a
+// fallback nobody declared.
 func Enum[R any, T EnumValuer[T]](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
 	var zero T
 	return registerEnum(s, unsafe.Pointer(field), reflect.TypeFor[T](), name,

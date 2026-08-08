@@ -18,7 +18,7 @@ const Redacted = "[redacted]"
 // failure, not in a decoding error from a source — and [Report.Secret] lets a
 // consumer honor the same rule in its own logging.
 //
-//	figureout.Value(s, &c.Token, "token", figureout.Secret()).NonEmpty()
+//	figureout.Explicit(s, &c.Token, "token", figureout.Secret()).NonEmpty()
 //
 // Secret implies [Hidden]. Generated JSON Schema marks the property
 // "writeOnly".

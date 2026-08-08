@@ -56,7 +56,7 @@ go run ./examples/service -paths                 # every path, type and default
 ```text
 listening on 0.0.0.0:9090
 request timeout 30s
-storage s3 bucket=service-data region=eu-central-1
+storage s3 bucket=service-data region=eu-central-1 prefix=""
 level=warn tags=[service production] limits=map[cpu:4 memory:8]
 
 provenance:
@@ -177,7 +177,7 @@ A nested object is either its own descriptor or an inline description:
 figureout.Object(s, &c.Server, "server", ServerDescriptor)  // shared or exported
 
 figureout.ObjectFunc(s, &c.Server, "server", func(c *Server, s *figureout.Schema[Server]) {
-	figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT")).InRange(1, 65535)
+	figureout.Explicit(s, &c.Port, "port", env.Name("LISTEN_PORT")).InRange(1, 65535)
 })
 ```
 
@@ -198,7 +198,7 @@ a path level with no Go struct behind it:
 
 ```go
 figureout.Group(s, "webhook", func(s *figureout.Schema[GitLab]) {
-	figureout.Value(s, &c.WebhookEnabled, "enabled").ApplyDefault(false)
+	figureout.Value(s, &c.WebhookEnabled, "enabled")
 	figureout.Value(s, &c.WebhookSecret, "secret", figureout.Hidden())
 })
 ```
@@ -230,8 +230,8 @@ provenance and a schema:
 
 ```go
 figureout.ListOf(s, &c.Sites, "sites", func(e *Site, s *figureout.Schema[Site]) {
-	figureout.Value(s, &e.Name, "name").NonEmpty()
-	figureout.Value(s, &e.MaxBytes, "max_bytes").ApplyDefault(0)
+	figureout.Explicit(s, &e.Name, "name").NonEmpty()
+	figureout.Value(s, &e.MaxBytes, "max_bytes")
 })
 
 figureout.MapOf(s, &c.Proxies, "proxies", describeProxy).MergeByKey()
@@ -304,16 +304,34 @@ type Config struct {
 	Timeout figureout.OptionalOf[time.Duration]   // missing | present
 }
 
-figureout.Value(s, &c.Port, "port").InRange(1, 65535)              // T = int
+figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)           // T = int
 figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)  // T = time.Duration
 ```
 
 The type carries the `Of` suffix so the plain name stays free for the
-function. `Value` rejects a carrier field with a diagnostic naming the
-function to use instead, so the two cannot be mixed up silently.
+function. `Value` and `Explicit` reject a carrier field with a diagnostic
+naming the function to use instead, so the two cannot be mixed up silently.
 
-A plain field is required: a missing value is an error unless the field has an
-applied default. Optionality lives in the Go type, never in a pointer.
+**What absence means is the registration function, not a modifier.** A plain
+field is one of two things, and the call site says which:
+
+```go
+figureout.Explicit(s, &c.Database.DSN, "dsn")   // absent is an error
+figureout.Value(s, &c.Jira.URL, "url")          // absent is ""
+figureout.Value(s, &c.Jira.MaxResults, "max")   // absent is 0
+```
+
+Most optional scalars have no meaningful default beyond the zero value, and
+the zero value is already visible in the Go type; `Value` says so in one word
+instead of a hundred repetitions of `ApplyDefault("")`. `Explicit` is for what
+an operator has to decide — an address, a credential, a port.
+
+A zero the field itself rejects never resolves silently: `Value` on a field
+constrained by `NonEmpty`, `InRange`, `Enum` or a `Check` is a compilation
+diagnostic pointing at `Explicit`, because a fallback no source could have
+written is a descriptor that cannot work. `Value(...).Required()` is `Explicit`
+spelled the long way, and `ApplyDefault` replaces the zero with a value of your
+own. Optionality itself lives in the Go type, never in a pointer.
 
 **A collection is the exception.** An absent list and an empty one are the same
 statement about the world, so a list or map nobody configured resolves to an
@@ -409,7 +427,7 @@ add the unit, then add the duration-spelled key and deprecate the old one.
 one `Pattern` or `MinLength` failure away from a log. `Secret` has teeth:
 
 ```go
-figureout.Value(s, &c.Token, "token", figureout.Secret()).Pattern(`^sk-[a-z0-9]+$`)
+figureout.Explicit(s, &c.Token, "token", figureout.Secret()).Pattern(`^sk-[a-z0-9]+$`)
 ```
 
 ```text
@@ -620,8 +638,8 @@ looks reasonable from the outside.
 helper per semantic type (`Int`, `String`, `Duration`), doubled for optionals.
 A single generic `Carrier[T]` constraint collapsing those pairs cannot be
 written: Go forbids a bare type parameter as a union term. So the split runs
-the other way — `Value` and `Optional` infer the element type from the
-carrier, one function per presence rather than two per semantic type.
+the other way — `Value`, `Explicit` and `Optional` infer the element type
+from the carrier, one function per presence rather than two per semantic type.
 
 The trade is that a wrong semantic kind is a compilation diagnostic rather than
 a compile error, since `Value[T]` accepts any `T`. In exchange, constraints are

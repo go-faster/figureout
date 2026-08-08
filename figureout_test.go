@@ -311,8 +311,8 @@ func TestTypeRegistry(t *testing.T) {
 	))
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Value(s, &c.Listen, "listen")
-		figureout.Value(s, &c.Admin, "admin")
+		figureout.Explicit(s, &c.Listen, "listen")
+		figureout.Explicit(s, &c.Admin, "admin")
 	}, figureout.WithTypeRegistry(types))
 	require.NoError(t, err)
 
@@ -351,7 +351,7 @@ func TestCheckIsRuntimeOnly(t *testing.T) {
 	}
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
-		figureout.Value(s, &c.Workers, "workers", figureout.Check("must-be-even", func(v int) error {
+		figureout.Explicit(s, &c.Workers, "workers", figureout.Check("must-be-even", func(v int) error {
 			if v%2 != 0 {
 				return errEven
 			}
@@ -431,7 +431,7 @@ func TestTypedConstraints(t *testing.T) {
 
 	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
 		figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)
-		figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+		figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)
 	})
 	require.NoError(t, err)
 

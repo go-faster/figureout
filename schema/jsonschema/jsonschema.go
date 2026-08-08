@@ -182,9 +182,10 @@ func applied(f *figureout.FieldModel) bool {
 }
 
 // erasable reports whether an explicit null leaves the field resolvable: it
-// must be optional, or have a default to fall back to.
+// must be optional, or have a default to fall back to, whether an applied one
+// or the zero value.
 func erasable(f *figureout.FieldModel) bool {
-	return f.Presence != figureout.PresenceRequired || applied(f)
+	return f.Presence != figureout.PresenceRequired || applied(f) || f.ZeroDefault()
 }
 
 func (g *generator) field(f *figureout.FieldModel) map[string]any {

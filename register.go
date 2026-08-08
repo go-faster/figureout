@@ -19,13 +19,34 @@ func registerValue[R, T any](
 	return &ValueField[T]{&FieldBuilder{b: b, reg: reg}}
 }
 
-// Value registers a plain field: one that is always materialized.
+// Value registers a plain field whose absence resolves to the zero value of T.
 //
 // The semantic type is derived from T, so named types such as
-// "type Port uint16" are integers with whatever the type registry adds. A
-// missing value is an error unless the field has an applied default; use
-// [Optional] for a field a source may leave out.
+// "type Port uint16" are integers with whatever the type registry adds.
+//
+// Absence is not an error: a field nobody configured reads as "", 0 or false,
+// which is what an optional scalar with no meaningful default wants, and the
+// zero value is already visible in the Go type. Say so differently when it is
+// not what the field means: [Explicit] demands a value, [ValueField.ApplyDefault]
+// substitutes another one, and [Optional] keeps absence visible to the consumer.
+//
+// A zero that no source could have written is a compilation error rather than a
+// silent one, so a field constrained by NonEmpty, InRange or Enum cannot fall
+// back to it.
 func Value[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
+	f := Explicit(s, field, name, opts...)
+	if f.ok() {
+		f.reg.zeroDefault = true
+	}
+	return f
+}
+
+// Explicit registers a plain field some source has to provide.
+//
+// It is [Value] without the zero fallback: a missing value is an error unless
+// the field carries an applied default. Use it for what an operator has to
+// decide, such as a database address or a listen port.
+func Explicit[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
 	b := s.b
 	f := registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[T](), name, opts)
 	if f.ok() && f.reg.acc.presence != PresenceRequired {
@@ -72,7 +93,7 @@ func Object[R, C any](s *Schema[R], field *C, name string, d *Descriptor[C], opt
 // collisions are scoped to C exactly as they would be in a separate [Derive].
 //
 //	figureout.ObjectFunc(s, &c.Server, "server", func(c *Server, s *figureout.Schema[Server]) {
-//		figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+//		figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)
 //	})
 //
 // Prefer [Object] for a descriptor shared by several parents or exported for

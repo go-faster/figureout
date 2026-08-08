@@ -66,9 +66,9 @@ type Config struct {
 
 var serverDescriptor = figureout.MustDerive(
 	func(c *Server, s *figureout.Schema[Server]) {
-		figureout.Value(s, &c.Address, "address", env.Name("ADDRESS")).
+		figureout.Explicit(s, &c.Address, "address", env.Name("ADDRESS")).
 			NonEmpty()
-		figureout.Value(s, &c.Port, "port", env.Name("PORT")).
+		figureout.Explicit(s, &c.Port, "port", env.Name("PORT")).
 			InRange(1, 65535)
 	},
 )
