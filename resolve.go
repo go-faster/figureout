@@ -510,6 +510,7 @@ func (m *Model) materializeLeaf(
 			Message:   f.Meta.Deprecated,
 			FieldPath: path,
 			GoPath:    f.GoName,
+			MovedTo:   f.MovedTo,
 			Origin:    &origin,
 		})
 	}

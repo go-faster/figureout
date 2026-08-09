@@ -57,9 +57,17 @@ type Diagnostic struct {
 	FieldPath string
 	// GoPath is the Go path, such as "Config.Server.Port".
 	GoPath string
-	Source SourceID
-	Target TargetID
-	Origin *Origin
+	// MovedTo is the path superseding [Diagnostic.FieldPath], carried by
+	// [CodeDeprecated] and [CodeMovedConflict] when the deprecation is a move.
+	//
+	// It is what the message names in prose, as data: an application that
+	// phrases its own warnings reads it instead of parsing [Diagnostic.Message].
+	// It is empty for a field deprecated without a replacement, and for every
+	// other code.
+	MovedTo string
+	Source  SourceID
+	Target  TargetID
+	Origin  *Origin
 }
 
 // Error implements [error].
