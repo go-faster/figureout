@@ -504,6 +504,22 @@ a deprecated key now lands a `SeverityWarning` in `report.Diagnostics`, with the
 origin that set it, so a binary can say "you are using a key that is going away"
 and still start.
 
+A warning is data, not only prose. Where the deprecation is a move, the
+diagnostic carries the superseding path in `MovedTo`, so an application that
+phrases its own warnings never parses `Message`:
+
+```go
+for _, d := range report.Diagnostics {
+	if d.Code == figureout.CodeDeprecated && d.MovedTo != "" {
+		warnf("%s is deprecated; use %s instead (%s)", d.FieldPath, d.MovedTo, d.Origin)
+	}
+}
+```
+
+`CodeMovedConflict` carries it too, so "set one of X or Y" is expressible
+without either path being a substring of a sentence. It is empty for a
+`Deprecated` with no replacement.
+
 `MovedFrom` is the behavior a configuration needs while it is being reshaped:
 
 ```go

@@ -389,3 +389,62 @@ func TestMovedFromRedirectsANestedObject(t *testing.T) {
 		"every member of a moved object comes across")
 	require.Len(t, warnings(report.Diagnostics), 1)
 }
+
+// diagnosticOf returns the single diagnostic carrying code.
+func diagnosticOf(t *testing.T, ds figureout.Diagnostics, code string) figureout.Diagnostic {
+	t.Helper()
+	var found []figureout.Diagnostic
+	for _, d := range ds {
+		if d.Code == code {
+			found = append(found, d)
+		}
+	}
+	require.Len(t, found, 1, "exactly one %s diagnostic", code)
+	return found[0]
+}
+
+// TestDeprecationCarriesTheTargetPath covers the machine-readable half of a
+// deprecation: an application that phrases its own warnings reads the target
+// rather than cutting a prefix off the message.
+func TestDeprecationCarriesTheTargetPath(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		doc  string
+		from string
+	}{
+		{"flat", `http_addr: ":9090"`, "http_addr"},
+		{"nested", "legacy:\n  addr: \":9090\"\n", "legacy.addr"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, report, err := movedDescriptor(t).Resolve(yaml.Bytes([]byte(tt.doc)))
+			require.NoError(t, err)
+
+			d := diagnosticOf(t, report.Diagnostics, figureout.CodeDeprecated)
+			require.Equal(t, tt.from, d.FieldPath)
+			require.Equal(t, "api.http_addr", d.MovedTo)
+		})
+	}
+}
+
+func TestMovedConflictCarriesTheTargetPath(t *testing.T) {
+	_, report, err := movedDescriptor(t).Resolve(yaml.Bytes([]byte(`
+http_addr: ":9090"
+api:
+  http_addr: ":8080"
+`)))
+	require.Error(t, err)
+
+	d := diagnosticOf(t, report.Diagnostics, figureout.CodeMovedConflict)
+	require.Equal(t, "http_addr", d.FieldPath)
+	require.Equal(t, "api.http_addr", d.MovedTo,
+		"both spellings are data, so an application can say set one of them in its own words")
+}
+
+func TestDeprecationWithoutAMoveHasNoTarget(t *testing.T) {
+	_, report, err := movedDescriptor(t).Resolve(yaml.Bytes([]byte(`port: 8080`)))
+	require.NoError(t, err)
+
+	d := diagnosticOf(t, report.Diagnostics, figureout.CodeDeprecated)
+	require.Equal(t, "port", d.FieldPath)
+	require.Empty(t, d.MovedTo, "a deprecation with no replacement has nothing to point at")
+}

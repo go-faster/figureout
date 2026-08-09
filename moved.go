@@ -157,6 +157,7 @@ func (m *Model) applyMoved(res *resolution, rep *Report) {
 				Code:      CodeMovedConflict,
 				FieldPath: f.Path,
 				GoPath:    target.GoName,
+				MovedTo:   target.Path,
 				Message: "moved to " + target.Path + ", and both are set (" +
 					state[conflicting[0]].assignment.Origin.String() +
 					"); remove the deprecated spelling",
@@ -170,6 +171,7 @@ func (m *Model) applyMoved(res *resolution, rep *Report) {
 			Code:      CodeDeprecated,
 			FieldPath: f.Path,
 			GoPath:    target.GoName,
+			MovedTo:   target.Path,
 			Message:   "deprecated, use " + target.Path,
 			Origin:    &origin,
 		})
