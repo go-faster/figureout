@@ -33,13 +33,31 @@ func Prefix(p string) Option {
 	})
 }
 
+// AllowEmpty makes a variable that is present and empty a value rather than an
+// absent one, which is what this source did before.
+//
+// Reach for it where the empty string is a value an operator picks on purpose.
+// Prefer [NullLiteral] where the intent is to erase what an earlier layer set:
+// that is a directive, and it reads as one.
+func AllowEmpty() Option {
+	return optionFunc(func(s *source) error {
+		s.allowEmpty = true
+		return nil
+	})
+}
+
 type source struct {
-	prefix string
-	vars   map[string]string
-	naming Naming
+	prefix     string
+	vars       map[string]string
+	naming     Naming
+	allowEmpty bool
 }
 
 // Current reads the process environment.
+//
+// A variable that is present and empty is treated as absent, so a deployment
+// that materializes "APP_TOKEN=${APP_TOKEN:-}" does not blank what a file
+// layer set. [AllowEmpty] opts out.
 func Current(opts ...Option) figureout.Source {
 	vars := make(map[string]string)
 	for _, kv := range os.Environ() {
@@ -87,7 +105,7 @@ func (s *source) Load(_ context.Context, m *figureout.Model) (*figureout.Layer, 
 	}
 
 	for _, e := range plan {
-		name, raw, ok := s.lookup(e.names)
+		name, raw, ok := s.lookup(e.names, s.allowEmpty)
 		if !ok {
 			continue
 		}
@@ -134,11 +152,19 @@ func decode(f *figureout.FieldModel, raw string, typ figureout.Type, sep string)
 }
 
 // lookup returns the first variable that is set, with its name and value.
-func (s *source) lookup(names []string) (name, value string, ok bool) {
+//
+// A variable that is present and empty is skipped as if it were unset, unless
+// keepEmpty says an empty value is a value here. Container tooling
+// materializes "X=${X:-}" whether or not an operator supplied a value, so an
+// empty string is the shell saying nothing, and it must not blank what an
+// earlier layer set. Erasing has its own spelling: see [NullLiteral].
+func (s *source) lookup(names []string, keepEmpty bool) (name, value string, ok bool) {
 	for _, n := range names {
-		if v, set := s.vars[n]; set {
-			return n, v, true
+		v, set := s.vars[n]
+		if !set || (v == "" && !keepEmpty) {
+			continue
 		}
+		return n, v, true
 	}
 	return "", "", false
 }

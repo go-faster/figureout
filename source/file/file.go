@@ -14,7 +14,9 @@
 //
 // A value is the file's contents with one trailing newline removed, so that a
 // secret written with "echo" reads back as written. A missing file leaves the
-// field to earlier layers.
+// field to earlier layers, and so does an empty one: a blank Secret key mounts
+// as a zero-length file whether or not anyone supplied a value. [AllowEmpty]
+// opts out.
 package file
 
 import (
@@ -52,6 +54,18 @@ func Optional() Option {
 	})
 }
 
+// AllowEmpty makes a zero-length file a value rather than an absent one, which
+// is what this source did before.
+//
+// Reach for it where the empty string is a value an operator picks on purpose,
+// rather than a key that tooling materialized without one.
+func AllowEmpty() Option {
+	return optionFunc(func(s *source) error {
+		s.allowEmpty = true
+		return nil
+	})
+}
+
 // Names replaces how file names are derived. See [Naming].
 func Names(n Naming) Option {
 	return optionFunc(func(s *source) error {
@@ -77,10 +91,11 @@ func DefaultNaming(_ *figureout.FieldModel, segments []string) []string {
 }
 
 type source struct {
-	dir      string
-	optional bool
-	naming   Naming
-	fsys     fs.FS
+	dir        string
+	optional   bool
+	allowEmpty bool
+	naming     Naming
+	fsys       fs.FS
 }
 
 // Dir reads values from the files in a directory.
@@ -183,7 +198,12 @@ func decode(f *figureout.FieldModel, raw string, typ figureout.Type, sep string)
 	return scalar.ParseText(typ, raw, sep)
 }
 
-// read returns the contents of the first file that exists.
+// read returns the contents of the first file that holds a value.
+//
+// A zero-length file is skipped as if it were not there: a Secret whose key
+// exists but is blank mounts as an empty file exactly as an unset variable
+// expands to an empty string, and neither is an operator blanking a value an
+// earlier layer set. [AllowEmpty] opts out.
 func (s *source) read(names []string) (name, value string, ok bool, err error) {
 	for _, n := range names {
 		if !fs.ValidPath(n) {
@@ -197,7 +217,11 @@ func (s *source) read(names []string) (name, value string, ok bool, err error) {
 			return "", "", false, errors.Wrapf(err, "read %q", n)
 		}
 		// A secret written with "echo" ends in a newline that is not part of it.
-		return n, strings.TrimSuffix(string(data), "\n"), true, nil
+		value := strings.TrimSuffix(string(data), "\n")
+		if value == "" && !s.allowEmpty {
+			continue
+		}
+		return n, value, true, nil
 	}
 	return "", "", false, nil
 }

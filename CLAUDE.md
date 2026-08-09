@@ -43,6 +43,9 @@ that target must keep producing `profile.out`.
   Completeness failures are the point, not an inconvenience.
 - Model types are suffixed (`FieldModel`, `ObjectModel`, `VariantModel`)
   because `Object` and `Variant` are registration functions.
+- **An empty input is absent.** An empty environment variable and a zero-length
+  file are what tooling materializes for a value nobody supplied, so neither
+  reaches a layer; `AllowEmpty()` opts out. Erasing has its own spelling.
 - **Source names are relative to the declaring object.** `env.Name("LISTEN_PORT")`
   inside a nested descriptor reads `SERVER_LISTEN_PORT`, so nesting composes and
   the collision check sees the real variable. env derivation is pluggable via

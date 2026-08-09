@@ -235,3 +235,75 @@ func TestCustomNamingCollision(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "environment variable PORT is assigned to both server.port and port")
 }
+
+// TestEmptyVariableIsAbsent covers the shape every compose file has:
+// "APP_TOKEN: ${APP_TOKEN:-}" materializes the variable whether or not an
+// operator supplied a value, and an empty one must not blank the file layer.
+func TestEmptyVariableIsAbsent(t *testing.T) {
+	type Cfg struct {
+		Token string
+	}
+
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Value(s, &c.Token, "token")
+	})
+	require.NoError(t, err)
+
+	cfg, report, err := d.Resolve(
+		env.Values(map[string]string{"TOKEN": "from-file"}),
+		env.Values(map[string]string{"TOKEN": ""}),
+	)
+	require.NoError(t, err)
+	require.Equal(t, "from-file", cfg.Token, "an empty variable is the shell saying nothing")
+
+	_, ok := report.ErasedBy("token")
+	require.False(t, ok, "an empty variable is absent, not an erase")
+}
+
+func TestEmptyVariableWithAllowEmpty(t *testing.T) {
+	type Cfg struct {
+		Token string
+	}
+
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Value(s, &c.Token, "token")
+	})
+	require.NoError(t, err)
+
+	cfg, report, err := d.Resolve(
+		env.Values(map[string]string{"TOKEN": "from-file"}),
+		env.Values(map[string]string{"TOKEN": ""}, env.AllowEmpty()),
+	)
+	require.NoError(t, err)
+	require.Empty(t, cfg.Token)
+
+	origin, ok := report.OriginOf("token")
+	require.True(t, ok)
+	require.Equal(t, env.Source, origin.Source)
+}
+
+func TestEmptyVariableFallsThroughToAnAlias(t *testing.T) {
+	cfg, _, err := descriptor(t).Resolve(env.Values(map[string]string{
+		"APP_LISTEN_PORT": "8080",
+		"APP_LEGACY":      "",
+		"APP_OLD_NAME":    "alias",
+	}, env.Prefix("APP_")))
+	require.NoError(t, err)
+	require.Equal(t, "alias", cfg.Legacy,
+		"an empty primary name is unset, so the alias is what is set")
+}
+
+func TestEmptyVariableLeavesARequiredFieldMissing(t *testing.T) {
+	type Cfg struct {
+		DSN string
+	}
+
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Explicit(s, &c.DSN, "dsn")
+	})
+	require.NoError(t, err)
+
+	_, _, err = d.Resolve(env.Values(map[string]string{"DSN": ""}))
+	require.Error(t, err, "an empty variable does not satisfy a field that must be set")
+	require.Contains(t, err.Error(), "no value provided and no default")
+}
