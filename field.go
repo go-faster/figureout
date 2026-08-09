@@ -58,10 +58,12 @@ func (f *FieldBuilder) Examples(values ...any) *FieldBuilder {
 	return f
 }
 
-// Required makes an absent collection an error instead of an empty one.
+// Required makes absence an error instead of a value.
 //
-// It is meaningful only for a list or a map: every other field is required
-// already, and an [OptionalOf] carrier says the opposite by construction.
+// It is meaningful for a collection, whose absence otherwise resolves to empty,
+// and for a [Value] field, whose absence otherwise resolves to the zero value;
+// "Value(...).Required()" is [Explicit] spelled the long way. An [OptionalOf]
+// carrier says the opposite by construction.
 func (f *FieldBuilder) Required() *FieldBuilder {
 	if !f.ok() {
 		return f
@@ -73,6 +75,7 @@ func (f *FieldBuilder) Required() *FieldBuilder {
 		return f
 	}
 	f.reg.required = true
+	f.reg.zeroDefault = false
 	return f
 }
 

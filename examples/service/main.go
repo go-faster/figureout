@@ -54,7 +54,8 @@ func run(path string) error {
 
 	switch {
 	case cfg.Storage.S3 != nil:
-		fmt.Printf("storage s3 bucket=%s region=%s\n", cfg.Storage.S3.Bucket, cfg.Storage.S3.Region)
+		fmt.Printf("storage s3 bucket=%s region=%s prefix=%q\n",
+			cfg.Storage.S3.Bucket, cfg.Storage.S3.Region, cfg.Storage.S3.Prefix)
 	case cfg.Storage.Local != nil:
 		fmt.Printf("storage local path=%s\n", cfg.Storage.Local.Path)
 	}
@@ -113,8 +114,11 @@ func printModel() {
 		if values, ok := figureout.EnumValuesOf(f); ok {
 			line += fmt.Sprintf(" %v", values)
 		}
-		if f.Default != nil && f.Default.Applied {
+		switch {
+		case f.Default != nil && f.Default.Applied:
 			line += fmt.Sprintf(" default=%v", f.Default.Value)
+		case f.ZeroDefault():
+			line += " default=zero"
 		}
 		if f.Meta.Doc != "" {
 			line += "  // " + f.Meta.Doc

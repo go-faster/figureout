@@ -20,7 +20,7 @@ type quickstart struct {
 // Declare the configuration once, then resolve it from any source.
 func Example() {
 	descriptor := figureout.MustDerive(func(c *quickstart, s *figureout.Schema[quickstart]) {
-		figureout.Value(s, &c.Address, "address").NonEmpty()
+		figureout.Explicit(s, &c.Address, "address").NonEmpty()
 		figureout.Value(s, &c.Port, "port").InRange(1, 65535).ApplyDefault(8080)
 		figureout.Value(s, &c.Debug, "debug").ApplyDefault(false)
 	})
@@ -161,10 +161,10 @@ type localBackend struct{ Path string }
 // A union selects between alternative shapes, tagged by a discriminator.
 func Example_oneOf() {
 	s3 := figureout.MustDerive(func(b *s3Backend, s *figureout.Schema[s3Backend]) {
-		figureout.Value(s, &b.Bucket, "bucket").NonEmpty()
+		figureout.Explicit(s, &b.Bucket, "bucket").NonEmpty()
 	})
 	local := figureout.MustDerive(func(b *localBackend, s *figureout.Schema[localBackend]) {
-		figureout.Value(s, &b.Path, "path").NonEmpty()
+		figureout.Explicit(s, &b.Path, "path").NonEmpty()
 	})
 
 	descriptor := figureout.MustDerive(func(c *storage, s *figureout.Schema[storage]) {
@@ -198,8 +198,8 @@ type documented struct {
 // The same descriptor generates a JSON Schema.
 func Example_jsonSchema() {
 	descriptor := figureout.MustDerive(func(c *documented, s *figureout.Schema[documented]) {
-		figureout.Value(s, &c.Address, "address").Doc("Listen address.").NonEmpty()
-		figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+		figureout.Explicit(s, &c.Address, "address").Doc("Listen address.").NonEmpty()
+		figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)
 	})
 
 	schema, _, err := jsonschema.Generate(descriptor, jsonschema.Semantic())

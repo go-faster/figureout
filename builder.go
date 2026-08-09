@@ -97,6 +97,7 @@ type registration struct {
 	meta        Metadata
 	def         *Default
 	required    bool
+	zeroDefault bool
 	merge       MergePolicy
 	mergeKey    string
 	movedFrom   []string
@@ -386,6 +387,7 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 			Targets:     reg.targets,
 			MovedFrom:   reg.movedFrom,
 			required:    reg.required,
+			zeroDefault: reg.zeroDefault,
 			widen:       reg.widen,
 			acc:         reg.acc,
 		}
@@ -436,6 +438,17 @@ func (b *builder) validateField(f *FieldModel) {
 		if !c.Applies(f.Type.Kind) {
 			b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
 				"constraint %q does not apply to a %s field", c.Kind(), f.Type.Kind)
+		}
+	}
+	// A zero value no source could have written is a descriptor that cannot
+	// resolve, so it fails where the declaration is rather than where the
+	// configuration is missing.
+	if f.ZeroDefault() && f.Type.Kind != TypeList && f.Type.Kind != TypeMap {
+		if err := f.Validate(reflect.New(f.Type.Go).Elem().Interface()); err != nil {
+			b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
+				"zero value of %s does not satisfy the field's own constraints (%s); "+
+					"register it with Explicit or give it a default",
+				f.Type.Go, err)
 		}
 	}
 	if f.Default != nil && f.Default.Value != nil {

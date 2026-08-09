@@ -25,7 +25,7 @@ func TestObjectFunc(t *testing.T) {
 	d, err := figureout.Derive(func(c *inlineConfig, s *figureout.Schema[inlineConfig]) {
 		figureout.ObjectFunc(s, &c.Server, "server", func(c *Server, s *figureout.Schema[Server]) {
 			figureout.Value(s, &c.Address, "address").ApplyDefault("localhost")
-			figureout.Value(s, &c.Port, "port", env.Name("LISTEN_PORT")).InRange(1, 65535)
+			figureout.Explicit(s, &c.Port, "port", env.Name("LISTEN_PORT")).InRange(1, 65535)
 		})
 		figureout.ObjectFunc(s, &c.DB, "db", func(c *inlineDB, s *figureout.Schema[inlineDB]) {
 			figureout.Value(s, &c.DSN, "dsn")

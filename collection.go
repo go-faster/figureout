@@ -13,7 +13,7 @@ import (
 // constraints, provenance and a schema:
 //
 //	figureout.ListOf(s, &c.Sites, "sites", func(e *Site, s *figureout.Schema[Site]) {
-//		figureout.Value(s, &e.Name, "name").NonEmpty()
+//		figureout.Explicit(s, &e.Name, "name").NonEmpty()
 //		figureout.Value(s, &e.MaxBytes, "max_bytes").ApplyDefault(0)
 //	})
 //

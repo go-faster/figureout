@@ -25,8 +25,8 @@ type Config struct {
 }
 
 var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[Server]) {
-	figureout.Value(s, &c.Address, "address").NonEmpty()
-	figureout.Value(s, &c.Port, "port", json.Accepts(json.Integer(), json.String())).
+	figureout.Explicit(s, &c.Address, "address").NonEmpty()
+	figureout.Explicit(s, &c.Port, "port", json.Accepts(json.Integer(), json.String())).
 		InRange(1, 65535)
 })
 

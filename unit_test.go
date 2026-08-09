@@ -24,7 +24,7 @@ type unitConfig struct {
 func unitDescriptor(t *testing.T) *figureout.Descriptor[unitConfig] {
 	t.Helper()
 	d, err := figureout.Derive(func(c *unitConfig, s *figureout.Schema[unitConfig]) {
-		figureout.Value(s, &c.Timeout, "timeout_seconds", figureout.Unit(time.Second)).
+		figureout.Explicit(s, &c.Timeout, "timeout_seconds", figureout.Unit(time.Second)).
 			Doc("How long a request may take.").
 			AtLeast(time.Second).
 			AtMost(10 * time.Minute)

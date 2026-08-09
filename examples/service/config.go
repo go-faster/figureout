@@ -46,6 +46,7 @@ type Storage struct {
 type S3Storage struct {
 	Bucket string
 	Region string
+	Prefix string
 }
 
 // LocalStorage stores data on the local filesystem.
@@ -87,15 +88,19 @@ var ServerDescriptor = figureout.MustDerive(
 // S3Descriptor describes [S3Storage].
 var S3Descriptor = figureout.MustDerive(
 	func(c *S3Storage, s *figureout.Schema[S3Storage]) {
-		figureout.Value(s, &c.Bucket, "bucket").NonEmpty()
+		figureout.Explicit(s, &c.Bucket, "bucket").NonEmpty()
 		figureout.Value(s, &c.Region, "region").ApplyDefault("us-east-1")
+
+		// No meaningful default beyond the empty string, and saying so is the
+		// registration function rather than an ApplyDefault("").
+		figureout.Value(s, &c.Prefix, "prefix").Doc("Key prefix within the bucket.")
 	},
 )
 
 // LocalDescriptor describes [LocalStorage].
 var LocalDescriptor = figureout.MustDerive(
 	func(c *LocalStorage, s *figureout.Schema[LocalStorage]) {
-		figureout.Value(s, &c.Path, "path").NonEmpty()
+		figureout.Explicit(s, &c.Path, "path").NonEmpty()
 	},
 )
 

@@ -21,7 +21,7 @@ type secretConfig struct {
 func secretDescriptor(t *testing.T) *figureout.Descriptor[secretConfig] {
 	t.Helper()
 	d, err := figureout.Derive(func(c *secretConfig, s *figureout.Schema[secretConfig]) {
-		figureout.Value(s, &c.Token, "token", figureout.Secret()).
+		figureout.Explicit(s, &c.Token, "token", figureout.Secret()).
 			Pattern(`^sk-[a-z0-9]+$`)
 		figureout.Value(s, &c.Retries, "retries").ApplyDefault(3)
 	})
@@ -39,7 +39,7 @@ func TestSecretRedactsConstraintFailures(t *testing.T) {
 
 func TestSecretRedactsEnumFailures(t *testing.T) {
 	d, err := figureout.Derive(func(c *secretConfig, s *figureout.Schema[secretConfig]) {
-		figureout.Value(s, &c.Token, "token", figureout.Secret()).Enum("sk-a", "sk-b")
+		figureout.Explicit(s, &c.Token, "token", figureout.Secret()).Enum("sk-a", "sk-b")
 		figureout.Value(s, &c.Retries, "retries").ApplyDefault(3)
 	})
 	require.NoError(t, err)

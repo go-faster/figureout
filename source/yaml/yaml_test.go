@@ -25,8 +25,8 @@ type Config struct {
 }
 
 var serverDescriptor = figureout.MustDerive(func(c *Server, s *figureout.Schema[Server]) {
-	figureout.Value(s, &c.Address, "address").NonEmpty()
-	figureout.Value(s, &c.Port, "port").InRange(1, 65535)
+	figureout.Explicit(s, &c.Address, "address").NonEmpty()
+	figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)
 })
 
 var configDescriptor = figureout.MustDerive(func(c *Config, s *figureout.Schema[Config]) {
@@ -126,11 +126,11 @@ var storeDescriptor = figureout.MustDerive(func(c *StoreConfig, s *figureout.Sch
 		figureout.Discriminator("type"),
 		figureout.Variant("s3", &c.Backend.S3,
 			figureout.MustDerive(func(b *S3Backend, s *figureout.Schema[S3Backend]) {
-				figureout.Value(s, &b.Bucket, "bucket").NonEmpty()
+				figureout.Explicit(s, &b.Bucket, "bucket").NonEmpty()
 			})),
 		figureout.Variant("local", &c.Backend.Local,
 			figureout.MustDerive(func(b *LocalBackend, s *figureout.Schema[LocalBackend]) {
-				figureout.Value(s, &b.Path, "path").NonEmpty()
+				figureout.Explicit(s, &b.Path, "path").NonEmpty()
 			})),
 	)
 })

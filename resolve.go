@@ -541,6 +541,16 @@ func (m *Model) applyDefault(f *FieldModel, v reflect.Value, path string, rep *R
 		}
 		return
 	}
+	// A zero-defaulted field is written rather than left alone: the caller's
+	// destination may not be zero, and resolution decides the value.
+	if f.ZeroDefault() {
+		if err := f.acc.set(v, reflect.New(f.Type.Go).Elem().Interface()); err != nil {
+			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
+			return
+		}
+		rep.origins[path] = Origin{Source: "default"}
+		return
+	}
 	if f.Required() {
 		rep.diag(f, path, nil, CodeMissingDefinition, "no value provided and no default")
 	}
