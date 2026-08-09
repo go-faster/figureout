@@ -108,10 +108,10 @@ type FieldModel struct {
 // Required reports whether a source has to provide the field.
 //
 // A field registered with [Explicit] is required unless it carries an applied
-// default. A field registered with [Value] is not: its absence resolves to the
-// zero value. A collection is never required by construction, because an absent
-// list and an empty one are the same statement about the world; both it and a
-// zero-defaulted field opt back in with [FieldBuilder.Required].
+// default, a collection included. A field registered with [Value] is not: its
+// absence resolves to the zero value, and a collection to an empty one, because
+// an absent list and an empty one are the same statement about the world. Both
+// opt back in with [FieldBuilder.Required].
 func (f *FieldModel) Required() bool {
 	switch {
 	case f.Presence != PresenceRequired:

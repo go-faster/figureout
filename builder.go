@@ -1,6 +1,7 @@
 package figureout
 
 import (
+	"fmt"
 	"reflect"
 	"runtime"
 	"slices"
@@ -440,15 +441,14 @@ func (b *builder) validateField(f *FieldModel) {
 				"constraint %q does not apply to a %s field", c.Kind(), f.Type.Kind)
 		}
 	}
-	// A zero value no source could have written is a descriptor that cannot
-	// resolve, so it fails where the declaration is rather than where the
-	// configuration is missing.
-	if f.ZeroDefault() && f.Type.Kind != TypeList && f.Type.Kind != TypeMap {
-		if err := f.Validate(reflect.New(f.Type.Go).Elem().Interface()); err != nil {
+	// A fallback the field itself rejects is a descriptor that cannot resolve,
+	// so it fails where the declaration is rather than where the configuration
+	// is missing.
+	if fb, ok := fallback(f); ok {
+		if err := f.Validate(fb.value); err != nil {
 			b.diags.errorf(CodeConstraintMismatch, f.GoName, f.Name,
-				"zero value of %s does not satisfy the field's own constraints (%s); "+
-					"register it with Explicit or give it a default",
-				f.Type.Go, err)
+				"%s does not satisfy the field's own constraints (%s); %s",
+				fb.what, err, fb.advice)
 		}
 	}
 	if f.Default != nil && f.Default.Value != nil {
@@ -483,6 +483,43 @@ func (b *builder) validateField(f *FieldModel) {
 		b.diags.errorf(CodeMissingDefinition, f.GoName, f.Name,
 			"%s is unexported and cannot be assigned; ignore it instead", f.GoName)
 	}
+}
+
+// absentValue is what a field resolves to when no source provides a value,
+// together with how a descriptor says that absence is an error instead.
+type absentValue struct {
+	value  any
+	what   string
+	advice string
+}
+
+// fallback returns the value absence resolves to, if it resolves to one at all.
+//
+// It mirrors what [Model.applyDefault] does at resolution: a collection is
+// empty, a [Value] field is zero, and everything else is either required or
+// carries its own default.
+func fallback(f *FieldModel) (absentValue, bool) {
+	if f.Presence != PresenceRequired || f.Required() {
+		return absentValue{}, false
+	}
+	if f.Default != nil && f.Default.Applied {
+		return absentValue{}, false
+	}
+	if empty, ok := emptyCollection(f.Type); ok {
+		return absentValue{
+			value:  empty,
+			what:   fmt.Sprintf("an empty %s", f.Type.Kind),
+			advice: "register it with Explicit, or mark it Required, so absence is an error",
+		}, true
+	}
+	if f.ZeroDefault() {
+		return absentValue{
+			value:  reflect.New(f.Type.Go).Elem().Interface(),
+			what:   fmt.Sprintf("the zero value of %s", f.Type.Go),
+			advice: "register it with Explicit, or give it a default",
+		}, true
+	}
+	return absentValue{}, false
 }
 
 // decoded reports whether any source decodes the field itself, in which case
