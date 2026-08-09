@@ -141,11 +141,31 @@ The differences are the point:
 | --- | --- | --- | --- |
 | `8080` vs `"8080"` | distinct; a string needs `json.Accepts(json.String())` | distinct by tag: `!!int` vs `!!str` | everything is text |
 | null (erases) | `null` | `null` or `~` | opt-in `env.NullLiteral` |
+| empty | `""` is a value | `""` is a value | absent; `env.AllowEmpty()` opts out |
 | positions | line and column | line and column | variable name |
 | anchors | — | resolved before binding | — |
 
 Both name their fields with `Name`, `Alias` and `Skip`, and both accept
 `DisallowUnknownFields()` to report members no field claims.
+
+**An empty variable is absent, not an empty value.** Container tooling
+materializes a variable whether or not an operator supplied one — the `:-` in
+`APP_TOKEN: ${APP_TOKEN:-}` is what you write so compose does not warn — and a
+`.env` template ships with `APP_TOKEN=` on purpose. Reading that as a value
+would blank the credential a file layer set, on the deploy that adopts the env
+layer, with nothing logged: as far as the resolver is concerned the operator
+set the field. `source/file` treats a zero-length file the same way, because a
+`Secret` key that exists but is blank mounts as exactly that. Both take
+`AllowEmpty()` where the empty string is a value an operator picks on purpose:
+
+```go
+env.Current(env.Prefix("APP_"))                     // APP_TOKEN= is absent
+env.Current(env.Prefix("APP_"), env.AllowEmpty())   // APP_TOKEN= is ""
+file.Dir("/run/secrets")                            // a zero-length file is absent
+```
+
+Erasing keeps its own spelling, because erasing is a decision: `null` in a
+document, or `env.NullLiteral` where a variable should carry it.
 
 A name is **relative to the object that declares it**, so nesting composes and
 a nested field can never silently claim a top-level field's variable:

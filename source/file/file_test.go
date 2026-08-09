@@ -148,3 +148,34 @@ func TestDirSkip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "default", cfg.A)
 }
+
+// TestEmptyFileIsAbsent covers the mounted-secret accident: a Secret whose key
+// exists but is blank mounts as a zero-length file, which must not blank what
+// an earlier layer set.
+func TestEmptyFileIsAbsent(t *testing.T) {
+	cfg, _, err := descriptor(t).Resolve(
+		yaml.Bytes([]byte("token: from-file\n")),
+		file.FS(fstest.MapFS{
+			"token": {Data: []byte("")},
+			// "echo" into an empty secret leaves a lone newline, which is the
+			// same accident with one more byte.
+			"database.dsn": {Data: []byte("\n")},
+		}),
+	)
+	require.NoError(t, err)
+	require.Equal(t, "from-file", cfg.Token)
+	require.Empty(t, cfg.Database.DSN, "nothing set it, so it keeps its default")
+}
+
+func TestEmptyFileWithAllowEmpty(t *testing.T) {
+	cfg, report, err := descriptor(t).Resolve(
+		yaml.Bytes([]byte("token: from-file\n")),
+		file.FS(fstest.MapFS{"token": {Data: []byte("")}}, file.AllowEmpty()),
+	)
+	require.NoError(t, err)
+	require.Empty(t, cfg.Token)
+
+	origin, ok := report.OriginOf("token")
+	require.True(t, ok)
+	require.Equal(t, file.Source, origin.Source)
+}

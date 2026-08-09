@@ -336,13 +336,19 @@ func TestOptionalCarrier(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	cfg, _, err := d.Resolve(env.Values(map[string]string{"NAME": ""}))
+	cfg, _, err := d.Resolve(env.Values(map[string]string{"NAME": ""}, env.AllowEmpty()))
 	require.NoError(t, err)
 
 	name, ok := cfg.Name.Value()
 	require.True(t, ok, "an explicitly provided zero value is present")
 	require.Empty(t, name)
 	require.False(t, cfg.Count.IsSet())
+
+	// Without AllowEmpty an empty variable is the shell saying nothing, so the
+	// carrier stays missing rather than becoming a present empty string.
+	cfg, _, err = d.Resolve(env.Values(map[string]string{"NAME": ""}))
+	require.NoError(t, err)
+	require.False(t, cfg.Name.IsSet())
 }
 
 func TestCheckIsRuntimeOnly(t *testing.T) {
