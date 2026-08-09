@@ -34,7 +34,7 @@ func registerValue[R, T any](
 // silent one, so a field constrained by NonEmpty, InRange or Enum cannot fall
 // back to it.
 func Value[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
-	f := Explicit(s, field, name, opts...)
+	f := registerPlain(s, field, name, opts)
 	if f.ok() {
 		f.reg.zeroDefault = true
 	}
@@ -46,7 +46,21 @@ func Value[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *
 // It is [Value] without the zero fallback: a missing value is an error unless
 // the field carries an applied default. Use it for what an operator has to
 // decide, such as a database address or a listen port.
+//
+// A collection is required too, rather than resolving to an empty one: the
+// absent-is-empty rule is what a collection does when nobody says otherwise,
+// and Explicit says otherwise.
 func Explicit[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption) *ValueField[T] {
+	f := registerPlain(s, field, name, opts)
+	if f.ok() {
+		f.reg.required = true
+	}
+	return f
+}
+
+// registerPlain records a field bound to a plain Go value, which is every
+// presence but a carrier's.
+func registerPlain[R, T any](s *Schema[R], field *T, name string, opts []FieldOption) *ValueField[T] {
 	b := s.b
 	f := registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[T](), name, opts)
 	if f.ok() && f.reg.acc.presence != PresenceRequired {

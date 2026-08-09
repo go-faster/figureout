@@ -326,22 +326,32 @@ the zero value is already visible in the Go type; `Value` says so in one word
 instead of a hundred repetitions of `ApplyDefault("")`. `Explicit` is for what
 an operator has to decide — an address, a credential, a port.
 
-A zero the field itself rejects never resolves silently: `Value` on a field
-constrained by `NonEmpty`, `InRange`, `Enum` or a `Check` is a compilation
-diagnostic pointing at `Explicit`, because a fallback no source could have
-written is a descriptor that cannot work. `Value(...).Required()` is `Explicit`
-spelled the long way, and `ApplyDefault` replaces the zero with a value of your
-own. Optionality itself lives in the Go type, never in a pointer.
+**A fallback the field itself rejects never resolves silently.** `Value` on a
+field constrained by `NonEmpty`, `InRange`, `Enum` or a `Check`, and any
+collection constrained by `MinItems`, is a compilation diagnostic naming the
+way out, because a value no source could have written is a descriptor that
+cannot work:
 
-**A collection is the exception.** An absent list and an empty one are the same
-statement about the world, so a list or map nobody configured resolves to an
-empty one rather than to a diagnostic — and to an empty value, not a nil one,
-so it encodes as `[]` rather than `null` one layer further out. `Required()`
-opts back in where a section really must be declared:
+```text
+constraint.type_mismatch [patterns]: an empty list does not satisfy the field's
+own constraints (length must be at least 1, got 0); register it with Explicit,
+or mark it Required, so absence is an error
+```
+
+`Value(...).Required()` is `Explicit` spelled the long way, and `ApplyDefault`
+replaces the fallback with a value of your own. Optionality itself lives in the
+Go type, never in a pointer.
+
+**A collection has a fallback of its own.** An absent list and an empty one are
+the same statement about the world, so a list or map nobody configured resolves
+to an empty one rather than to a diagnostic — and to an empty value, not a nil
+one, so it encodes as `[]` rather than `null` one layer further out. `Explicit`
+and `Required()` both opt back in where a section really must be declared:
 
 ```go
 figureout.ListOf(s, &c.Sites, "sites", describeSite)              // absent is empty
 figureout.ListOf(s, &c.Backends, "backends", describeBackend).Required()
+figureout.Explicit(s, &c.Patterns, "patterns").MinItems(1)        // absent is an error
 ```
 
 There is **no nullable carrier**. Optional and nullable are orthogonal in a
