@@ -10,6 +10,10 @@ package tree
 
 import "github.com/go-faster/figureout"
 
+// SchemaKey is the document member naming the schema that describes the file.
+// It is accepted at the root of every document and bound to nothing.
+const SchemaKey = "$schema"
+
 // Kind is the structural kind of a document node.
 type Kind uint8
 

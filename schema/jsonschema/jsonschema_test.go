@@ -1,6 +1,7 @@
 package jsonschema_test
 
 import (
+	"encoding/json"
 	"iter"
 	"os"
 	"slices"
@@ -87,6 +88,60 @@ func TestGenerateSemantic(t *testing.T) {
 		jsonschema.CodeNotRepresentable + " timeout",
 		figureout.CodeValidatorNotExport + " workers",
 	}, codes)
+}
+
+func TestSchemaKey(t *testing.T) {
+	decode := func(t *testing.T, data []byte) map[string]any {
+		t.Helper()
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal(data, &doc))
+		return doc
+	}
+
+	t.Run("Root", func(t *testing.T) {
+		type Nested struct {
+			Port int
+		}
+		type Cfg struct {
+			Nested Nested
+		}
+		nested := figureout.MustDerive(func(c *Nested, s *figureout.Schema[Nested]) {
+			figureout.Value(s, &c.Port, "port")
+		})
+		d := figureout.MustDerive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+			figureout.Object(s, &c.Nested, "nested", nested)
+		})
+
+		data, _, err := jsonschema.Generate(d)
+		require.NoError(t, err)
+		doc := decode(t, data)
+
+		props := doc["properties"].(map[string]any)
+		require.Equal(t, map[string]any{"type": "string"}, props["$schema"],
+			"the root declares the member that attaches this schema")
+		require.NotContains(t, doc["required"], "$schema", "an injected member is never required")
+
+		inner := props["nested"].(map[string]any)["properties"].(map[string]any)
+		require.NotContains(t, inner, "$schema", "only the root carries it")
+	})
+
+	t.Run("Declared", func(t *testing.T) {
+		type Cfg struct {
+			Schema string
+		}
+		d := figureout.MustDerive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+			figureout.Explicit(s, &c.Schema, "$schema").NonEmpty()
+		})
+
+		data, _, err := jsonschema.Generate(d)
+		require.NoError(t, err)
+		doc := decode(t, data)
+
+		props := doc["properties"].(map[string]any)
+		require.Equal(t, map[string]any{"type": "string", "minLength": float64(1)},
+			props["$schema"], "a registered field keeps its own declaration")
+		require.Equal(t, []any{"$schema"}, doc["required"])
+	})
 }
 
 func TestStrictExport(t *testing.T) {
