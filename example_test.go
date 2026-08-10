@@ -212,6 +212,9 @@ func Example_jsonSchema() {
 	//   "$schema": "https://json-schema.org/draft/2020-12/schema",
 	//   "additionalProperties": false,
 	//   "properties": {
+	//     "$schema": {
+	//       "type": "string"
+	//     },
 	//     "address": {
 	//       "description": "Listen address.",
 	//       "minLength": 1,

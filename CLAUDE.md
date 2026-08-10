@@ -47,6 +47,11 @@ that target must keep producing `profile.out`.
 - **An empty input is absent.** An empty environment variable and a zero-length
   file are what tooling materializes for a value nobody supplied, so neither
   reaches a layer; `AllowEmpty()` opts out. Erasing has its own spelling.
+- **`$schema` is accepted at the document root and bound to nothing.** It is an
+  editor annotation, not configuration, so the binder never reports it as
+  unknown and `schema/jsonschema` declares it next to the registered properties.
+  A closed root that omitted it would reject the member that attaches the schema
+  we generate. Root only; a registered `$schema` field wins.
 - **Source names are relative to the declaring object.** `env.Name("LISTEN_PORT")`
   inside a nested descriptor reads `SERVER_LISTEN_PORT`, so nesting composes and
   the collision check sees the real variable. env derivation is pluggable via

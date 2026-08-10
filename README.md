@@ -148,6 +148,13 @@ The differences are the point:
 Both name their fields with `Name`, `Alias` and `Skip`, and both accept
 `DisallowUnknownFields()` to report members no field claims.
 
+**`$schema` at the document root is always accepted.** It names the schema that
+describes the file, which is how an editor finds it, so `DisallowUnknownFields()`
+lets it through and `schema/jsonschema` declares it alongside the registered
+properties — otherwise the generated schema would reject the very member that
+attaches it. It is accepted at the root only, and a descriptor that registers
+`$schema` itself keeps its own declaration.
+
 **An empty variable is absent, not an empty value.** Container tooling
 materializes a variable whether or not an operator supplied one — the `:-` in
 `APP_TOKEN: ${APP_TOKEN:-}` is what you write so compose does not warn — and a

@@ -121,6 +121,12 @@ func (b Binder) object(
 			if _, ok := claimed[key]; ok {
 				continue
 			}
+			// A root schema reference is an editor annotation, not configuration:
+			// it names the schema describing the file, so no descriptor declares
+			// it and rejecting it would break the schema we generate.
+			if prefix == "" && key == SchemaKey {
+				continue
+			}
 			_, pos, _ := node.Field(key)
 			b.errorf(layer, prefix+key, pos, figureout.CodeSourceUnsupported,
 				"unknown configuration property %q", prefix+key)

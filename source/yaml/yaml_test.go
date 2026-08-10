@@ -168,6 +168,23 @@ func TestUnionDisallowUnknownKeepsDiscriminator(t *testing.T) {
 	require.NoError(t, err, "the discriminator is claimed by the union, not unknown")
 }
 
+func TestSchemaKey(t *testing.T) {
+	_, _, err := storeDescriptor.Resolve(yaml.Bytes([]byte(`$schema: ./store.schema.json
+backend:
+  type: s3
+  bucket: configs
+`), yaml.DisallowUnknownFields()))
+	require.NoError(t, err)
+
+	_, _, err = storeDescriptor.Resolve(yaml.Bytes([]byte(`backend:
+  type: s3
+  bucket: configs
+  $schema: ./store.schema.json
+`), yaml.DisallowUnknownFields()))
+	require.Error(t, err, "only the document root carries a schema reference")
+	require.Contains(t, err.Error(), `unknown configuration property "backend.$schema"`)
+}
+
 func TestNamesAndAliases(t *testing.T) {
 	type Cfg struct {
 		Port   int

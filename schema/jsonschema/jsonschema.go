@@ -24,7 +24,9 @@ const (
 	keyType       = "type"
 	keyProperties = "properties"
 	keyRequired   = "required"
+	keySchema     = "$schema"
 	typeInteger   = "integer"
+	typeString    = "string"
 )
 
 // Diagnostic codes reported by generation.
@@ -128,7 +130,8 @@ func Generate[T any](d *figureout.Descriptor[T], opts ...Option) ([]byte, figure
 	}
 
 	doc := g.object(d.Model().Root)
-	doc["$schema"] = Dialect
+	allowSchemaKey(doc)
+	doc[keySchema] = Dialect
 	if g.title != "" {
 		doc["title"] = g.title
 	}
@@ -233,7 +236,7 @@ func (g *generator) union(f *figureout.FieldModel) map[string]any {
 		schema := g.object(v.Object)
 		props, _ := schema[keyProperties].(map[string]any)
 		props[u.Discriminator] = map[string]any{
-			"type":  "string",
+			"type":  typeString,
 			"const": v.Tag,
 		}
 		required, _ := schema[keyRequired].([]string)
@@ -337,7 +340,7 @@ func jsonType(k figureout.TypeKind) string {
 	case figureout.TypeNumber:
 		return "number"
 	case figureout.TypeString, figureout.TypeBytes, figureout.TypeDuration, figureout.TypeTimestamp:
-		return "string"
+		return typeString
 	case figureout.TypeList:
 		return "array"
 	default:

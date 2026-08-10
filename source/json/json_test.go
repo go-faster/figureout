@@ -174,6 +174,49 @@ func TestDisallowUnknownFields(t *testing.T) {
 	require.Contains(t, err.Error(), `unknown configuration property "extra"`)
 }
 
+func TestSchemaKey(t *testing.T) {
+	type Nested struct {
+		Port int
+	}
+	type Cfg struct {
+		Nested Nested
+	}
+	nested := figureout.MustDerive(func(c *Nested, s *figureout.Schema[Nested]) {
+		figureout.Value(s, &c.Port, "port")
+	})
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Object(s, &c.Nested, "nested", nested)
+	})
+	require.NoError(t, err)
+
+	t.Run("Root", func(t *testing.T) {
+		body := []byte(`{"$schema": "./cfg.schema.json", "nested": {"port": 1}}`)
+		cfg, _, err := d.Resolve(json.Bytes(body, json.DisallowUnknownFields()))
+		require.NoError(t, err)
+		require.Equal(t, 1, cfg.Nested.Port)
+	})
+
+	t.Run("Nested", func(t *testing.T) {
+		body := []byte(`{"nested": {"port": 1, "$schema": "./cfg.schema.json"}}`)
+		_, _, err := d.Resolve(json.Bytes(body, json.DisallowUnknownFields()))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `unknown configuration property "nested.$schema"`)
+	})
+
+	t.Run("Declared", func(t *testing.T) {
+		type Cfg struct {
+			Schema string
+		}
+		d := figureout.MustDerive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+			figureout.Value(s, &c.Schema, "$schema")
+		})
+		body := []byte(`{"$schema": "./cfg.schema.json"}`)
+		cfg, _, err := d.Resolve(json.Bytes(body, json.DisallowUnknownFields()))
+		require.NoError(t, err)
+		require.Equal(t, "./cfg.schema.json", cfg.Schema)
+	})
+}
+
 func TestOptionalFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent.json")
 
