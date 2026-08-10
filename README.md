@@ -9,7 +9,7 @@ go get github.com/go-faster/figureout
 ```
 
 The core, four sources (JSON, YAML, environment variables, mounted files) and
-one target (JSON Schema), wired end to end.
+two targets (JSON Schema, Markdown reference), wired end to end.
 
 ```go
 type Config struct {
@@ -34,6 +34,10 @@ cfg, report, err := ConfigDescriptor.Resolve(
 	env.Current(env.Prefix("APP_")),   // later sources win
 )
 schema, diags, err := jsonschema.Generate(ConfigDescriptor, jsonschema.Semantic())
+reference, diags, err := docs.Generate(ConfigDescriptor,
+	docs.ForSource(yaml.File("config.yaml")),
+	docs.ForSource(env.Current(env.Prefix("APP_"))),
+)
 ```
 
 ## Examples
@@ -50,6 +54,7 @@ go run ./examples/service                        # resolve and print provenance
 APP_SERVER_LISTEN_PORT=9090 go run ./examples/service  # env wins over the file
 APP_SERVER_TIMEOUT=null go run ./examples/service # erase a value from the file
 go run ./examples/service -schema                # JSON Schema for JSON input
+go run ./examples/service -docs                  # the Markdown reference below
 go run ./examples/service -paths                 # every path, type and default
 ```
 
@@ -110,6 +115,7 @@ fine either way.
 | `figureout/source/env` | environment variable source |
 | `figureout/source/file` | one value per file, for mounted secrets |
 | `figureout/schema/jsonschema` | JSON Schema target |
+| `figureout/schema/docs` | Markdown reference target |
 
 ## Sources
 
@@ -662,6 +668,36 @@ The two spellings never half-merge across layers. A widened scalar stands for
 the whole object, so whichever spelling a later layer uses replaces the other
 outright.
 
+## Reference documentation
+
+`schema/docs` renders the compiled model as Markdown, so the documented
+configuration cannot drift from the decoded one:
+
+```go
+reference, diags, err := docs.Generate(ConfigDescriptor,
+	docs.Title("Service configuration"),
+	docs.ForSource(yaml.File("config.yaml")),
+	docs.ForSource(env.Current(env.Prefix("APP_"))),
+)
+```
+
+One table per object, nested objects and collection elements as sections of
+their own, a union rendered once per variant with the tag that selects it.
+Hidden fields are omitted, deprecated ones are marked rather than dropped, and a
+rule with no prose form — an opaque `Check` — is reported the way `jsonschema`
+reports what it cannot represent.
+
+`ForSource` takes a configured source rather than a `SourceID`, because the
+names it documents belong to that configuration: `env.Prefix("APP_")` is what
+makes the variable `APP_SERVER_LISTEN_PORT`. The source answers through
+`figureout.SourceNamer`, so a column quotes the names actually read.
+
+[`examples/service/CONFIG.md`](examples/service/CONFIG.md) is generated this
+way, and a test fails when it falls behind the descriptor.
+
+`Build` returns the [`Page`](schema/docs/page.go) that `Generate` renders, for a
+caller that wants another format.
+
 ## Library choices
 
 **JSON uses `encoding/json`.** Its `Token` and `InputOffset` are exported, so
@@ -724,8 +760,7 @@ duplicate.
 
 ## Not yet implemented
 
-TOML and flag sources; CUE source and schema output; generated documentation;
-code generation; optimized unsafe accessors. `ScalarOr` covers a field, not yet
+TOML and flag sources; CUE source and schema output; code generation; optimized unsafe accessors. `ScalarOr` covers a field, not yet
 a list element: `projects: [group/docs]` alongside `[{ref: group/docs}]` still
 needs a decoder. Invariants are declared on the configuration that owns a list,
 not on its elements.
@@ -738,6 +773,7 @@ make test_fast   # go test ./...
 make coverage    # profile.out plus a per-function summary
 make fuzz        # the JSON and text scalar parsers
 make golden      # refresh golden files
+make docs        # refresh examples/service/CONFIG.md
 make example     # run examples/service end to end
 make lint fmt    # golangci-lint
 ```

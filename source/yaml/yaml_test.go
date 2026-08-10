@@ -209,3 +209,48 @@ func TestMalformedDocument(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(yaml.Bytes([]byte("server: [unclosed\n")))
 	require.Error(t, err)
 }
+
+// TestProjectNames covers the names the source reports for documentation: they
+// are the very ones it binds, so a renamed member, an alias, a skipped field
+// and a collection element are all spelled the way a document has to write them.
+func TestProjectNames(t *testing.T) {
+	type Site struct {
+		Name string
+	}
+	type Nested struct {
+		Value string
+	}
+	type Cfg struct {
+		Renamed string
+		Aliased string
+		Skipped string
+		Nested  Nested
+		Sites   []Site
+	}
+
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Value(s, &c.Renamed, "renamed", yaml.Name("listen"))
+		figureout.Value(s, &c.Aliased, "aliased", yaml.Alias("old"))
+		figureout.Value(s, &c.Skipped, "skipped", yaml.Skip())
+		figureout.Object(s, &c.Nested, "nested",
+			figureout.MustDerive(func(n *Nested, s *figureout.Schema[Nested]) {
+				figureout.Value(s, &n.Value, "value")
+			}))
+		figureout.ListOf(s, &c.Sites, "sites", func(e *Site, s *figureout.Schema[Site]) {
+			figureout.Explicit(s, &e.Name, "name").NonEmpty()
+		})
+	})
+	require.NoError(t, err)
+
+	namer, ok := yaml.File("").(figureout.SourceNamer)
+	require.True(t, ok)
+
+	require.Equal(t, map[string][]string{
+		"renamed":      {"listen"},
+		"aliased":      {"aliased", "old"},
+		"nested":       {"nested"},
+		"nested.value": {"nested.value"},
+		"sites":        {"sites"},
+		"sites[].name": {"sites[].name"},
+	}, namer.ProjectNames(d.Model()))
+}

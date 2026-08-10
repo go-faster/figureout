@@ -459,3 +459,20 @@ func separatorOf(f *figureout.FieldModel) string {
 	}
 	return defaultSeparator
 }
+
+// ProjectNames implements [figureout.SourceNamer].
+//
+// The names are the very ones [source.Load] reads, prefix and naming included,
+// because both come from the same plan.
+func (s *source) ProjectNames(m *figureout.Model) map[string][]string {
+	plan, _ := s.plan(m)
+	out := make(map[string][]string, len(plan))
+	for _, e := range plan {
+		out[e.path] = e.names
+	}
+	return out
+}
+
+// ProjectNames implements [figureout.SourceNamer]. A source that failed to
+// configure has no names to report.
+func (f *failing) ProjectNames(*figureout.Model) map[string][]string { return nil }

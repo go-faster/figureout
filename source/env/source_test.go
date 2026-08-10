@@ -307,3 +307,39 @@ func TestEmptyVariableLeavesARequiredFieldMissing(t *testing.T) {
 	require.Error(t, err, "an empty variable does not satisfy a field that must be set")
 	require.Contains(t, err.Error(), "no value provided and no default")
 }
+
+// TestProjectNames covers the names the source reports for documentation. They
+// come from the same plan Load reads, so the prefix and a per-field Name are
+// both part of the variable a document should name.
+func TestProjectNames(t *testing.T) {
+	type Server struct {
+		Port int
+	}
+	type Site struct {
+		Name string
+	}
+	type Cfg struct {
+		Server Server
+		Sites  []Site
+	}
+
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Object(s, &c.Server, "server",
+			figureout.MustDerive(func(sv *Server, s *figureout.Schema[Server]) {
+				figureout.Value(s, &sv.Port, "port", env.Name("LISTEN_PORT"))
+			}))
+		// A list of objects has no spelling here, so it is absent rather than
+		// documented under an invented index convention.
+		figureout.ListOf(s, &c.Sites, "sites", func(e *Site, s *figureout.Schema[Site]) {
+			figureout.Explicit(s, &e.Name, "name").NonEmpty()
+		})
+	})
+	require.NoError(t, err)
+
+	namer, ok := env.Values(nil, env.Prefix("APP_")).(figureout.SourceNamer)
+	require.True(t, ok)
+
+	require.Equal(t, map[string][]string{
+		"server.port": {"APP_SERVER_LISTEN_PORT"},
+	}, namer.ProjectNames(d.Model()))
+}

@@ -171,3 +171,8 @@ func Integer() figureout.Shape { return figureout.Shape{Kind: figureout.ShapeInt
 func Number() figureout.Shape  { return figureout.Shape{Kind: figureout.ShapeNumber} }
 func String() figureout.Shape  { return figureout.Shape{Kind: figureout.ShapeString} }
 func Boolean() figureout.Shape { return figureout.Shape{Kind: figureout.ShapeBoolean} }
+
+// ProjectNames implements [figureout.SourceNamer].
+func (s *source) ProjectNames(m *figureout.Model) map[string][]string {
+	return tree.Names(m, Source)
+}
