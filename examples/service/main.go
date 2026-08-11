@@ -5,16 +5,21 @@
 //	go run ./examples/service
 //	APP_SERVER_PORT=9090 go run ./examples/service
 //	go run ./examples/service -schema
+//	go run ./examples/service -docs
 package main
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/go-faster/figureout"
+	"github.com/go-faster/figureout/schema/docs"
 	"github.com/go-faster/figureout/schema/jsonschema"
+	"github.com/go-faster/figureout/source/env"
 	"github.com/go-faster/figureout/source/json"
+	"github.com/go-faster/figureout/source/yaml"
 )
 
 func main() {
@@ -22,12 +27,17 @@ func main() {
 		path       = flag.String("config", "examples/service/config.yaml", "configuration file")
 		printJSON  = flag.Bool("schema", false, "print the JSON Schema and exit")
 		printPaths = flag.Bool("paths", false, "print every configuration path and exit")
+		printDocs  = flag.Bool("docs", false, "print the Markdown reference and exit")
 	)
 	flag.Parse()
 
 	switch {
 	case *printJSON:
 		if err := printSchema(); err != nil {
+			fail(err)
+		}
+	case *printDocs:
+		if err := printReference(os.Stdout); err != nil {
 			fail(err)
 		}
 	case *printPaths:
@@ -104,6 +114,27 @@ func printSchema() error {
 	}
 	fmt.Println(string(schema))
 	return nil
+}
+
+// printReference renders the Markdown reference, which is committed as
+// CONFIG.md and checked for staleness by a test.
+//
+// The sources are the ones Load resolves from, configured the same way, so the
+// documented names are the names actually read.
+func printReference(w io.Writer) error {
+	page, diags, err := docs.Generate(ConfigDescriptor,
+		docs.Title("Service configuration"),
+		docs.ForSource(yaml.File("")),
+		docs.ForSource(env.Current(env.Prefix("APP_"))),
+	)
+	if err != nil {
+		return err
+	}
+	for _, d := range diags {
+		fmt.Fprintln(os.Stderr, "warning:", d.Error())
+	}
+	_, err = w.Write(page)
+	return err
 }
 
 // printModel walks the compiled descriptor, which is what documentation and

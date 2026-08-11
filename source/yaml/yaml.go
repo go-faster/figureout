@@ -178,3 +178,8 @@ func Skip() figureout.FieldOption {
 		return c.SkipSource(Source)
 	})
 }
+
+// ProjectNames implements [figureout.SourceNamer].
+func (s *source) ProjectNames(m *figureout.Model) map[string][]string {
+	return tree.Names(m, Source)
+}

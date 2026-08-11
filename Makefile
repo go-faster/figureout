@@ -16,8 +16,12 @@ fuzz:
 .PHONY: fuzz
 
 golden:
-	go test ./schema/jsonschema/ -update
+	go test ./schema/jsonschema/ ./schema/docs/ -update
 .PHONY: golden
+
+docs:
+	go run ./examples/service -docs > examples/service/CONFIG.md
+.PHONY: docs
 
 example:
 	go run ./examples/service

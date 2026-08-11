@@ -146,9 +146,15 @@ func (b Binder) member(node *Node, f *figureout.FieldModel) (string, *Node, Pos,
 }
 
 func (b Binder) names(f *figureout.FieldModel) []string {
+	return memberNames(f, b.Source)
+}
+
+// memberNames returns the member names a source binds a field to, primary
+// first and aliases after. It is nil for a field the source skips.
+func memberNames(f *figureout.FieldModel, source figureout.SourceID) []string {
 	primary := f.Name
 	var aliases []string
-	if p, ok := f.Source(b.Source); ok {
+	if p, ok := f.Source(source); ok {
 		if p.Skip {
 			return nil
 		}
