@@ -119,7 +119,8 @@ func TestSchemaKey(t *testing.T) {
 		props := doc["properties"].(map[string]any)
 		require.Equal(t, map[string]any{"type": "string"}, props["$schema"],
 			"the root declares the member that attaches this schema")
-		require.NotContains(t, doc["required"], "$schema", "an injected member is never required")
+		required, _ := doc["required"].([]any)
+		require.NotContains(t, required, "$schema", "an injected member is never required")
 
 		inner := props["nested"].(map[string]any)["properties"].(map[string]any)
 		require.NotContains(t, inner, "$schema", "only the root carries it")
@@ -251,4 +252,44 @@ func TestGenerateForSource(t *testing.T) {
 	forEnv, _, err := jsonschema.Generate(d, jsonschema.ForSource(env.Source))
 	require.NoError(t, err)
 	gold.Str(t, string(forEnv), "for_source_env.json")
+}
+
+// TestNestedObjectRequired: a section is listed as required only when something
+// inside it has to be written. A nested object has no presence of its own, so
+// listing every one of them would flag documents that left an optional section
+// out.
+func TestNestedObjectRequired(t *testing.T) {
+	type Token struct {
+		Env  string
+		File string
+	}
+	type Server struct {
+		Address string
+		Port    int
+	}
+	type Cfg struct {
+		Token  Token
+		Server Server
+	}
+
+	tokenDesc := figureout.MustDerive(func(c *Token, s *figureout.Schema[Token]) {
+		figureout.Value(s, &c.Env, "env")
+		figureout.Value(s, &c.File, "file")
+	})
+	serverDesc := figureout.MustDerive(func(c *Server, s *figureout.Schema[Server]) {
+		figureout.Explicit(s, &c.Address, "address")
+		figureout.Value(s, &c.Port, "port")
+	})
+	d := figureout.MustDerive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.Object(s, &c.Token, "token", tokenDesc)
+		figureout.Object(s, &c.Server, "server", serverDesc)
+	})
+
+	data, _, err := jsonschema.Generate(d)
+	require.NoError(t, err)
+
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+	require.Equal(t, []any{"server"}, doc["required"],
+		"the token requires nothing, so a document may leave it out entirely")
 }

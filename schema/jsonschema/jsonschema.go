@@ -8,6 +8,7 @@ package jsonschema
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/go-faster/figureout"
@@ -164,7 +165,7 @@ func (g *generator) object(o *figureout.ObjectModel) map[string]any {
 
 	for _, f := range o.Fields {
 		props[f.Name] = g.field(f)
-		if f.Required() {
+		if f.Required() && demanded(f) {
 			required = append(required, f.Name)
 		}
 	}
@@ -178,6 +179,30 @@ func (g *generator) object(o *figureout.ObjectModel) map[string]any {
 		doc[keyRequired] = required
 	}
 	return doc
+}
+
+// demanded reports whether omitting the field can make a document invalid.
+//
+// Every field but a nested object does: what makes one required is its own
+// presence, and [figureout.FieldModel.Required] answers for it. A nested object
+// has no presence of its own — it is materialized whether or not a document
+// declares it, which is why Required reports it as required — so what decides
+// is whether anything inside has to be written. A section none of whose members
+// is required cannot be missed, and listing it would flag every document that
+// left an optional section out.
+//
+// A union is the exception among objects: it is selected by a discriminator,
+// which is a member that has to be written.
+func demanded(f *figureout.FieldModel) bool {
+	switch {
+	case f.Type.Union != nil:
+		return true
+	case f.Type.Object == nil:
+		return true
+	default:
+		return slices.ContainsFunc(f.Type.Object.Fields,
+			func(m *figureout.FieldModel) bool { return m.Required() && demanded(m) })
+	}
 }
 
 func applied(f *figureout.FieldModel) bool {
