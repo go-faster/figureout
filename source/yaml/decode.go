@@ -18,11 +18,13 @@ const (
 	tagStr   = "!!str"
 	tagMap   = "!!map"
 	tagSeq   = "!!seq"
+	tagMerge = "!!merge"
 )
 
 // convertNode turns a parsed YAML node into the shared document tree.
 //
-// Anchors are resolved here, so a binder never has to know about aliases.
+// Anchors and merge keys are resolved here, so a binder never has to know about
+// aliases or about a key that is really a splice.
 func convertNode(n *yaml.Node) (*tree.Node, error) {
 	if n == nil || n.IsZero() {
 		// An empty document decodes to a zero node rather than an error.
@@ -62,10 +64,19 @@ func convertNode(n *yaml.Node) (*tree.Node, error) {
 
 	case yaml.MappingNode:
 		out := &tree.Node{Kind: tree.Object, Pos: pos, Tag: tagMap}
+		var merged []tree.Field
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			key, value := n.Content[i], n.Content[i+1]
 			if key.Kind != yaml.ScalarNode {
 				return nil, errors.Errorf("line %d: mapping key must be a scalar", key.Line)
+			}
+			if key.ShortTag() == tagMerge {
+				fields, err := mergeFields(value)
+				if err != nil {
+					return nil, err
+				}
+				merged = append(merged, fields...)
+				continue
 			}
 			child, err := convertNode(value)
 			if err != nil {
@@ -77,11 +88,52 @@ func convertNode(n *yaml.Node) (*tree.Node, error) {
 				Value: child,
 			})
 		}
+
+		seen := make(map[string]struct{}, len(out.Fields))
+		for _, f := range out.Fields {
+			seen[f.Key] = struct{}{}
+		}
+		for _, f := range merged {
+			if _, ok := seen[f.Key]; ok {
+				continue
+			}
+			seen[f.Key] = struct{}{}
+			out.Fields = append(out.Fields, f)
+		}
 		return out, nil
 
 	default:
 		return nil, errors.Errorf("line %d: unsupported node kind %v", n.Line, n.Kind)
 	}
+}
+
+// mergeFields reads the mapping, or the sequence of mappings, a merge key
+// refers to.
+//
+// The fields keep the position of the mapping they were written in, so a
+// diagnostic about a merged value points at the anchor that defined it rather
+// than at the "<<" that pulled it in.
+func mergeFields(n *yaml.Node) ([]tree.Field, error) {
+	if n.Kind == yaml.SequenceNode {
+		var out []tree.Field
+		for _, item := range n.Content {
+			fields, err := mergeFields(item)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, fields...)
+		}
+		return out, nil
+	}
+
+	merged, err := convertNode(n)
+	if err != nil {
+		return nil, err
+	}
+	if merged == nil || merged.Kind != tree.Object {
+		return nil, errors.Errorf("line %d: merge value must be a mapping", n.Line)
+	}
+	return merged.Fields, nil
 }
 
 // decoder applies YAML's scalar rules.

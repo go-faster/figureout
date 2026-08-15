@@ -222,6 +222,91 @@ func TestEmptyDocument(t *testing.T) {
 	require.Equal(t, 80, cfg.Port)
 }
 
+// TestMergeKey covers the merge key: an anchored mapping is a template several
+// entries write themselves against, so "<<" has to be spliced in rather than
+// bound as a property named "<<".
+func TestMergeKey(t *testing.T) {
+	type Site struct {
+		Name    string
+		Address string
+		Port    int
+	}
+	type Cfg struct {
+		Sites []Site
+	}
+	d, err := figureout.Derive(func(c *Cfg, s *figureout.Schema[Cfg]) {
+		figureout.ListOf(s, &c.Sites, "sites", func(e *Site, s *figureout.Schema[Site]) {
+			figureout.Explicit(s, &e.Name, "name").NonEmpty()
+			figureout.Explicit(s, &e.Address, "address").NonEmpty()
+			figureout.Value(s, &e.Port, "port").ApplyDefault(80)
+		})
+	})
+	require.NoError(t, err)
+
+	cfg, report, err := d.Resolve(yaml.Bytes([]byte(`sites:
+  - &base
+    name: first
+    address: 127.0.0.1
+    port: 8080
+  - <<: *base
+    name: second
+  - <<: *base
+    name: third
+    port: 9090
+`), yaml.DisallowUnknownFields()))
+	require.NoError(t, err)
+	require.Equal(t, []Site{
+		{Name: "first", Address: "127.0.0.1", Port: 8080},
+		{Name: "second", Address: "127.0.0.1", Port: 8080},
+		{Name: "third", Address: "127.0.0.1", Port: 9090},
+	}, cfg.Sites)
+
+	origin, ok := report.OriginOf("sites[1].address")
+	require.True(t, ok)
+	require.Equal(t, 4, origin.Line, "a merged value is reported where the anchor wrote it")
+}
+
+// TestMergeSequence covers a sequence of merges: earlier entries win, the way
+// YAML says they do, and a later one still fills what no earlier one set.
+func TestMergeSequence(t *testing.T) {
+	cfg, _, err := configDescriptor.Resolve(yaml.Bytes([]byte(`defaults: &defaults
+  address: 0.0.0.0
+  port: 80
+override: &override
+  port: 8080
+server:
+  <<: [*override, *defaults]
+`)))
+	require.NoError(t, err)
+	require.Equal(t, "0.0.0.0", cfg.Server.Address)
+	require.Equal(t, 8080, cfg.Server.Port)
+}
+
+func TestMergeNestedAnchor(t *testing.T) {
+	cfg, _, err := configDescriptor.Resolve(yaml.Bytes([]byte(`base: &base
+  address: 0.0.0.0
+derived: &derived
+  <<: *base
+  port: 80
+server:
+  <<: *derived
+  port: 8080
+`)))
+	require.NoError(t, err)
+	require.Equal(t, "0.0.0.0", cfg.Server.Address)
+	require.Equal(t, 8080, cfg.Server.Port)
+}
+
+func TestMergeScalar(t *testing.T) {
+	_, _, err := configDescriptor.Resolve(yaml.Bytes([]byte(`server:
+  <<: nonsense
+  address: 0.0.0.0
+  port: 80
+`)))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "merge value must be a mapping")
+}
+
 func TestMalformedDocument(t *testing.T) {
 	_, _, err := configDescriptor.Resolve(yaml.Bytes([]byte("server: [unclosed\n")))
 	require.Error(t, err)
