@@ -78,6 +78,36 @@ func TestOpaqueKeepsTheScalarSpelling(t *testing.T) {
 	require.Equal(t, map[string]any{"a": int64(512), "b": "512", "c": true, "d": 1.5}, cfg.Collector)
 }
 
+// TestOpaqueKeepsTheMapType covers the structure half of the same promise. YAML
+// gives an "any" a map[string]any only while every key of a mapping is a
+// string, and a passthrough is handed to a program that will read it as YAML.
+//
+// Found by a differential fuzzer in an adopting repository, on "0000:" — which
+// YAML resolves as the integer zero, not as a name.
+func TestOpaqueKeepsTheMapType(t *testing.T) {
+	d, err := figureout.Derive(describeEmbed)
+	require.NoError(t, err)
+
+	cfg, _, err := d.Resolve(yaml.Bytes([]byte("otelcol:\n  nested:\n    0000: value\n")))
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{
+		"nested": map[any]any{0: "value"},
+	}, cfg.Collector, "an integer key is not a name")
+
+	cfg, _, err = d.Resolve(yaml.Bytes([]byte("otelcol:\n  nested:\n    \"0000\": value\n")))
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{
+		"nested": map[string]any{"0000": "value"},
+	}, cfg.Collector, "a quoted one is")
+
+	// A JSON object is string-keyed by construction, so it never chooses.
+	cfg, _, err = d.Resolve(json.Bytes([]byte(`{"otelcol": {"nested": {"0000": "value"}}}`)))
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{
+		"nested": map[string]any{"0000": "value"},
+	}, cfg.Collector)
+}
+
 // TestOpaqueIsExemptFromUnknownFields is the load-bearing half: strictness stops
 // at the passthrough and nowhere else.
 func TestOpaqueIsExemptFromUnknownFields(t *testing.T) {

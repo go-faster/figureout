@@ -85,10 +85,37 @@ func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureou
 
 // DecodeAny implements [tree.ScalarDecoder].
 //
-// A number keeps its integer spelling where it has one: encoding/json would
-// hand back a float64, and a passthrough carrying an identifier or a byte count
-// must not lose digits on the way through.
-func (decoder) DecodeAny(n *tree.Node) (any, error) {
+// A JSON object is always string-keyed, so a passthrough is map[string]any all
+// the way down. A number keeps its integer spelling where it has one:
+// encoding/json would hand back a float64, and a passthrough carrying an
+// identifier or a byte count must not lose digits on the way through.
+func (d decoder) DecodeAny(n *tree.Node) (any, error) {
+	switch n.Kind {
+	case tree.Null:
+		return nil, nil
+	case tree.Array:
+		out := make([]any, 0, len(n.Items))
+		for i, item := range n.Items {
+			v, err := d.DecodeAny(item)
+			if err != nil {
+				return nil, errors.Wrapf(err, "element %d", i)
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	case tree.Object:
+		out := make(map[string]any, len(n.Fields))
+		for _, f := range n.Fields {
+			v, err := d.DecodeAny(f.Value)
+			if err != nil {
+				return nil, errors.Wrapf(err, "key %q", f.Key)
+			}
+			out[f.Key] = v
+		}
+		return out, nil
+	default:
+	}
+
 	num, ok := n.Value.(json.Number)
 	if !ok {
 		return n.Value, nil
