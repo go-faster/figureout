@@ -90,6 +90,52 @@ func TestQuotedScalarIsNotANumber(t *testing.T) {
 	require.Contains(t, err.Error(), "want !!int, got !!str")
 }
 
+// TestIntegerSpellings pins that every spelling YAML resolves as a number reads as the number YAML
+// says it is, rather than as base ten or as an error.
+func TestIntegerSpellings(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want int
+	}{
+		{"8080", 8080},
+		{"+8080", 8080},
+		{"1_000", 1000},
+		{"0x1f", 31},
+		{"0o17", 15},
+		{"017", 15},
+		{"0b101", 5},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			cfg, _, err := configDescriptor.Resolve(yaml.Bytes([]byte(
+				"server:\n  address: localhost\n  port: " + tt.text + "\n",
+			)))
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.Server.Port)
+		})
+	}
+}
+
+func TestFloatSpellings(t *testing.T) {
+	for _, tt := range []struct {
+		text string
+		want float64
+	}{
+		{"0.5", 0.5},
+		{".5", 0.5},
+		{"1e3", 1000},
+		{"1_000.5", 1000.5},
+		{"7", 7},
+	} {
+		t.Run(tt.text, func(t *testing.T) {
+			cfg, _, err := configDescriptor.Resolve(yaml.Bytes([]byte(
+				"server:\n  address: localhost\n  port: 80\nratio: " + tt.text + "\n",
+			)))
+			require.NoError(t, err)
+			require.InDelta(t, tt.want, cfg.Ratio, 1e-9)
+		})
+	}
+}
+
 func TestAnchorsAreResolved(t *testing.T) {
 	cfg, _, err := configDescriptor.Resolve(yaml.Bytes([]byte(`defaults: &host 127.0.0.1
 server:
