@@ -2,6 +2,7 @@ package figureout
 
 import (
 	"reflect"
+	"unsafe"
 
 	"github.com/go-faster/errors"
 )
@@ -16,8 +17,8 @@ const (
 	PresenceRequired Presence = iota
 	// PresenceOptional is an [OptionalOf] carrier: missing or present.
 	//
-	// There is deliberately no third state. An explicit null in a source is a
-	// merge directive that erases earlier layers, not a value a field holds,
+	// There is deliberately no nullable state. An explicit null in a source is
+	// a merge directive that erases earlier layers, not a value a field holds,
 	// so nullability never reaches the Go type.
 	PresenceOptional
 )
@@ -43,6 +44,7 @@ type carrierInfo interface {
 type carrierRef interface {
 	carrierSet(v any) error
 	carrierGet() (any, bool)
+	carrierAddr() unsafe.Pointer
 }
 
 func (OptionalOf[T]) carrierPresence() Presence { return PresenceOptional }
@@ -62,11 +64,33 @@ func (o *OptionalOf[T]) carrierGet() (any, bool) {
 	return v, ok
 }
 
-// unwrapCarrier reports the presence modeled by t and the Go type of the
-// value it carries. A type that is not a carrier is required and carries itself.
-func unwrapCarrier(t reflect.Type) (Presence, reflect.Type) {
-	if c, ok := reflect.New(t).Elem().Interface().(carrierInfo); ok {
-		return c.carrierPresence(), c.carrierElem()
+// carrierAddr is the address of the carried value. A nested object's members
+// bind by their address inside it, and the carried value is unexported, which
+// reflect will address but not hand out an interface for.
+func (o *OptionalOf[T]) carrierAddr() unsafe.Pointer { return unsafe.Pointer(&o.value) }
+
+// unwrapCarrier reports the presence modeled by t, whether the value it carries
+// is reached through a pointer, and the Go type of that value. A type that is
+// not a carrier is required and carries itself.
+//
+// Presence and indirection are separate questions, and a type answers them
+// separately. [OptionalOf] is the only thing that says a value may be missing;
+// a pointer says only that the value is held behind one, and resolution
+// allocates it. So "*C" is required and "OptionalOf[*C]" is optional, and
+// neither reads the other's meaning into a nil.
+func unwrapCarrier(t reflect.Type) (p Presence, indirect bool, elem reflect.Type) {
+	// A pointer is checked first: the pointer-receiver methods of [OptionalOf]
+	// are in a *OptionalOf's method set, so asking a nil one what it carries
+	// would call a method on it.
+	if t.Kind() == reflect.Pointer {
+		return PresenceRequired, true, t.Elem()
 	}
-	return PresenceRequired, t
+	if c, ok := reflect.New(t).Elem().Interface().(carrierInfo); ok {
+		held := c.carrierElem()
+		if held.Kind() == reflect.Pointer {
+			return c.carrierPresence(), true, held.Elem()
+		}
+		return c.carrierPresence(), false, held
+	}
+	return PresenceRequired, false, t
 }

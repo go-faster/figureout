@@ -97,7 +97,8 @@ func TestObjectFuncForeignPointer(t *testing.T) {
 
 func TestObjectFuncNilDescribe(t *testing.T) {
 	_, err := figureout.Derive(func(c *inlineConfig, s *figureout.Schema[inlineConfig]) {
-		figureout.ObjectFunc(s, &c.Server, "server", nil)
+		// Spelled out because a nil describe names no type to infer C from.
+		figureout.ObjectFunc[inlineConfig, Server, Server](s, &c.Server, "server", nil)
 		figureout.IgnoreRecursive(s, &c.DB)
 	})
 	require.Error(t, err)

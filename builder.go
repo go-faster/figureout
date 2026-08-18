@@ -258,8 +258,9 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 		index:    bd.index,
 		settable: !bd.skipped,
 	}
-	presence, elem := unwrapCarrier(bd.typ)
+	presence, indirect, elem := unwrapCarrier(bd.typ)
 	reg.acc.presence = presence
+	reg.acc.indirect = indirect
 	reg.acc.elem = elem
 
 	if kind == regIgnore {
@@ -270,6 +271,25 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 
 	if name == "" {
 		b.diags.errorf(CodeMissingDefinition, bd.goPath, "", "empty configuration name")
+		return reg
+	}
+
+	// Two carriers stacked are two answers to one question: which of the two
+	// says the value is missing has no defensible answer. Only [OptionalOf]
+	// answers it, so a second one anywhere below the first is refused, whether
+	// it sits behind the pointer of a "*OptionalOf[T]" or inside another
+	// carrier.
+	if inner, _, _ := unwrapCarrier(elem); inner != PresenceRequired {
+		b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+			"%s holds a %s carrier; absence has to be spelled once", bd.goPath, inner)
+		return reg
+	}
+
+	// A pointer is indirection, and one level of it is all a configuration
+	// means by it: a "**T" has a second nil that answers nothing.
+	if indirect && elem.Kind() == reflect.Pointer {
+		b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+			"%s is a pointer to a pointer; a value is held behind at most one", bd.goPath)
 		return reg
 	}
 
