@@ -216,11 +216,12 @@ func (m *Model) fold(res *resolution, layer *Layer, rep *Report) {
 
 		policy := MergeReplace
 		var f *FieldModel
-		if found, ok := m.FieldByPath(a.Path); ok {
-			f, policy = found, found.Merge
+		var own bool
+		if found, isOwn, ok := m.fieldAt(a.Path); ok {
+			f, own, policy = found, isOwn, found.Merge
 		}
 
-		if handled, path := m.foldCollection(res, a, f, rep); handled {
+		if handled, path := m.foldCollection(res, a, f, own, rep); handled {
 			continue
 		} else if path != "" {
 			a.Path = path

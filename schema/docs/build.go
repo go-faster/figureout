@@ -21,6 +21,9 @@ type generator struct {
 
 	out     *Page
 	anchors map[string]int
+	// sections is the section documenting each object, so a shape that nests
+	// itself is documented once and linked to from wherever it recurs.
+	sections map[*figureout.ObjectModel]*Section
 }
 
 // rootTitle names the section documenting the descriptor's own object, which
@@ -33,6 +36,7 @@ func (g *generator) page() *Page {
 		g.out.Sources = append(g.out.Sources, s.ID)
 	}
 	g.anchors = map[string]int{}
+	g.sections = map[*figureout.ObjectModel]*Section{}
 	g.section(g.model.Root, "", g.newSection(rootTitle))
 	return g.out
 }
@@ -47,6 +51,7 @@ func (g *generator) newSection(title string) *Section {
 // off, empty at the root.
 func (g *generator) section(obj *figureout.ObjectModel, base string, s *Section) {
 	g.out.Sections = append(g.out.Sections, s)
+	g.sections[obj] = s
 
 	// Nested sections are appended after this one is complete, so a reader
 	// meets an object before its members.
@@ -65,6 +70,16 @@ func (g *generator) section(obj *figureout.ObjectModel, base string, s *Section)
 		if f.Moved() {
 			// A former spelling documents itself as deprecated and points at
 			// what superseded it; the structure is documented there.
+			continue
+		}
+		if target, ok := f.Recursive(); ok {
+			// The shape nests itself, so it has no last level to enumerate.
+			// The row points back at the section documenting the object it
+			// re-enters, which is a section a reader has already met.
+			if enclosing, ok := g.sections[target]; ok {
+				row.Section = enclosing.Anchor
+				row.Recursive = enclosing.Title
+			}
 			continue
 		}
 		switch elem, collection := f.Elements(); {

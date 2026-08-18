@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-faster/figureout"
@@ -26,6 +28,8 @@ const (
 	keyProperties = "properties"
 	keyRequired   = "required"
 	keySchema     = "$schema"
+	keyDefs       = "$defs"
+	keyRef        = "$ref"
 	typeInteger   = "integer"
 	typeString    = "string"
 	typeObject    = "object"
@@ -131,8 +135,14 @@ func Generate[T any](d *figureout.Descriptor[T], opts ...Option) ([]byte, figure
 		}
 	}
 
-	doc := g.object(d.Model().Root)
+	g.plan(d.Model())
+	// The root is written out rather than referred to: it is the document the
+	// references point into.
+	doc := g.objectBody(d.Model().Root)
 	allowSchemaKey(doc)
+	if len(g.defs) > 0 {
+		doc[keyDefs] = g.defs
+	}
 	doc[keySchema] = Dialect
 	if g.title != "" {
 		doc["title"] = g.title
@@ -158,9 +168,77 @@ type generator struct {
 	strict bool
 	title  string
 	diags  figureout.Diagnostics
+
+	// refs is the pointer each recursive object is written as, and defs the
+	// definitions those pointers name. See [generator.plan].
+	refs map[*figureout.ObjectModel]string
+	defs map[string]any
 }
 
+// plan names every object a recursive field re-enters.
+//
+// A recursive configuration has no finite inline schema, and JSON Schema has
+// the vocabulary for exactly this: the object is emitted once and referred to.
+// The root refers to itself as "#", which is the document being written;
+// anything else becomes a definition named after the Go type it describes.
+func (g *generator) plan(m *figureout.Model) {
+	g.refs = map[*figureout.ObjectModel]string{}
+
+	var targets []*figureout.ObjectModel
+	taken := map[string]int{}
+	for _, f := range m.Fields() {
+		target, ok := f.Recursive()
+		if !ok {
+			continue
+		}
+		if _, named := g.refs[target]; named {
+			continue
+		}
+		if target == m.Root {
+			g.refs[target] = "#"
+			continue
+		}
+		g.refs[target] = "#/" + keyDefs + "/" + defName(target, taken)
+		targets = append(targets, target)
+	}
+
+	if len(targets) == 0 {
+		return
+	}
+	g.defs = make(map[string]any, len(targets))
+	for _, target := range targets {
+		name := strings.TrimPrefix(g.refs[target], "#/"+keyDefs+"/")
+		// The body is emitted directly: going through [generator.object] would
+		// yield the reference that names it, and the object refers to itself
+		// from inside, which is the whole point of writing it once.
+		g.defs[name] = g.objectBody(target)
+	}
+}
+
+// defName picks a unique definition name for an object, after the Go type it
+// describes.
+func defName(o *figureout.ObjectModel, taken map[string]int) string {
+	name := "object"
+	if o.Go != nil && o.Go.Name() != "" {
+		name = o.Go.Name()
+	}
+	n := taken[name]
+	taken[name]++
+	if n == 0 {
+		return name
+	}
+	return name + "-" + strconv.Itoa(n)
+}
+
+// object emits an object, as a reference wherever one names it.
 func (g *generator) object(o *figureout.ObjectModel) map[string]any {
+	if ref, ok := g.refs[o]; ok {
+		return map[string]any{keyRef: ref}
+	}
+	return g.objectBody(o)
+}
+
+func (g *generator) objectBody(o *figureout.ObjectModel) map[string]any {
 	props := map[string]any{}
 	var required []string
 
@@ -200,10 +278,20 @@ func demanded(f *figureout.FieldModel) bool {
 		return true
 	case f.Type.Object == nil:
 		return true
+	case isRecursive(f):
+		// The object encloses this field, so whatever inside it has to be
+		// written is already answered where it is declared. Asking again here
+		// would not terminate.
+		return false
 	default:
 		return slices.ContainsFunc(f.Type.Object.Fields,
 			func(m *figureout.FieldModel) bool { return m.Required() && demanded(m) })
 	}
+}
+
+func isRecursive(f *figureout.FieldModel) bool {
+	_, ok := f.Recursive()
+	return ok
 }
 
 func applied(f *figureout.FieldModel) bool {

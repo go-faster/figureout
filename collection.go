@@ -146,9 +146,14 @@ func elementModel[E any](b *builder, name string, describe func(*E, *Schema[E]))
 			return nil
 		}
 
-		nb := newBuilder(rv, ElementPath(reg.goName, ""), b.opts)
-		describe(root, &Schema[E]{b: nb})
-		obj := nb.compile()
+		obj, nb := openObject(b, rv, ElementPath(reg.goName, ""), describe)
+		if nb == nil {
+			// The element description encloses this list: the elements are of
+			// the very shape being described. A collection is where recursion
+			// ends by itself, since a layer that provides no elements provides
+			// no level either.
+			return obj
+		}
 		b.diags = append(b.diags, nb.diags...)
 		if len(nb.invariants) > 0 {
 			// An element invariant would have to run per element, with paths to

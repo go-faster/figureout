@@ -158,6 +158,9 @@ func description(f *Field) string {
 	if f.Secret {
 		parts = append(parts, "**Secret.**")
 	}
+	if f.Recursive != "" {
+		parts = append(parts, "Nests "+f.Recursive+" again.")
+	}
 	return strings.Join(parts, " ")
 }
 
