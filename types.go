@@ -1,6 +1,7 @@
 package figureout
 
 import (
+	"encoding"
 	"reflect"
 	"time"
 )
@@ -69,6 +70,11 @@ type Type struct {
 	// Scalar is the scalar spelling an object also accepts, as set by
 	// [ScalarOr]. It is nil for an object that is only ever written as one.
 	Scalar *Type
+
+	// Text reports that the Go type parses itself from text through
+	// [encoding.TextUnmarshaler], which then decides what every spelling
+	// means. See [textScalar].
+	Text bool
 }
 
 // UnitName names what a unit-scaled integer counts, for diagnostics and
@@ -117,6 +123,8 @@ type VariantModel struct {
 }
 
 var (
+	textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+
 	durationType = reflect.TypeFor[time.Duration]()
 	timeType     = reflect.TypeFor[time.Time]()
 	bytesType    = reflect.TypeFor[[]byte]()
@@ -134,16 +142,17 @@ func deriveType(t reflect.Type) (Type, bool) {
 		return Type{Kind: TypeBytes, Go: t}, true
 	}
 
+	text := textScalar(t)
 	switch t.Kind() {
 	case reflect.Bool:
-		return Type{Kind: TypeBoolean, Go: t}, true
+		return Type{Kind: TypeBoolean, Go: t, Text: text}, true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return Type{Kind: TypeInteger, Go: t}, true
+		return Type{Kind: TypeInteger, Go: t, Text: text}, true
 	case reflect.Float32, reflect.Float64:
-		return Type{Kind: TypeNumber, Go: t}, true
+		return Type{Kind: TypeNumber, Go: t, Text: text}, true
 	case reflect.String:
-		return Type{Kind: TypeString, Go: t}, true
+		return Type{Kind: TypeString, Go: t, Text: text}, true
 	case reflect.Slice, reflect.Array:
 		elem, ok := deriveType(t.Elem())
 		if !ok {
@@ -165,4 +174,30 @@ func deriveType(t reflect.Type) (Type, bool) {
 	default:
 		return Type{}, false
 	}
+}
+
+// textScalar reports whether t is a named scalar that parses itself from text.
+//
+// A type carrying its own [encoding.TextUnmarshaler] is the authority on what
+// its spellings mean: "debug" is a level and 1 is not one, "256MiB" is a byte
+// count and the underlying int64 has no idea. Deriving such a field from its
+// underlying kind does not merely reject the spelling documents use — it binds
+// the spellings that do parse to whatever the underlying kind makes of them,
+// which is how a level of 1 becomes "warn" instead of an error.
+//
+// The semantic kind and the generated schema still come from the underlying
+// kind; what the type takes over is reading the text. Only a named scalar
+// qualifies: a struct or a slice is a shape the descriptor can describe, and
+// collapsing it to text would hide the description rather than add one.
+func textScalar(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64,
+		reflect.String:
+	default:
+		return false
+	}
+	return reflect.PointerTo(t).Implements(textUnmarshalerType)
 }

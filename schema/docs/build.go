@@ -249,6 +249,12 @@ func lengthProse(t figureout.Type, c figureout.LengthConstraint) string {
 // what it is written as, because the unit is the only thing that says what the
 // number counts.
 func typeName(t figureout.Type) string {
+	// A type that parses itself from text keeps its semantic kind and gains a
+	// spelling, so the page names both rather than the one a reader would not
+	// have guessed.
+	if t.Text && t.Kind != figureout.TypeString {
+		return t.Kind.String() + " or string"
+	}
 	switch t.Kind {
 	case figureout.TypeDuration:
 		if t.Unit > 0 {
