@@ -1,6 +1,8 @@
 package yaml
 
 import (
+	"strconv"
+
 	"github.com/go-faster/errors"
 	"github.com/go-faster/yaml"
 
@@ -144,10 +146,45 @@ type decoder struct{}
 
 // DecodeScalar implements [tree.ScalarDecoder].
 func (decoder) DecodeScalar(t figureout.Type, n *tree.Node, _ []figureout.Shape) (any, error) {
+	text := n.Text
 	if err := checkTag(t.Kind, n.Tag); err != nil {
 		return nil, err
 	}
-	return scalar.ParseText(t, n.Text, "")
+	switch t.Kind {
+	case figureout.TypeInteger, figureout.TypeNumber:
+		// YAML resolves 0x1f, 0o17, 017, 0b101 and 10_000_000 as numbers, and the shared
+		// text parser reads base ten. Without canonicalizing, a spelling accepted by its
+		// tag is rejected by its value — and 017 would read as seventeen rather than as
+		// the fifteen YAML says it is.
+		canonical, err := canonicalNumber(text)
+		if err != nil {
+			return nil, err
+		}
+		text = canonical
+	default:
+	}
+	return scalar.ParseText(t, text, "")
+}
+
+// canonicalNumber re-spells a YAML number the way the shared text parser reads it, using YAML's
+// own resolution so the two can never disagree about what a scalar is.
+func canonicalNumber(text string) (string, error) {
+	var v any
+	if err := yaml.Unmarshal([]byte(text), &v); err != nil {
+		return "", errors.Errorf("invalid number %q", text)
+	}
+	switch v := v.(type) {
+	case int:
+		return strconv.Itoa(v), nil
+	case int64:
+		return strconv.FormatInt(v, 10), nil
+	case uint64:
+		return strconv.FormatUint(v, 10), nil
+	case float64:
+		return strconv.FormatFloat(v, 'g', -1, 64), nil
+	default:
+		return text, nil
+	}
 }
 
 // checkTag rejects a quoted string standing in for a number or a boolean.
