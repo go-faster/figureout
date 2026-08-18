@@ -273,6 +273,17 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 		return reg
 	}
 
+	// Two carriers stacked are two answers to one question: which of the two
+	// nils means the value is missing has no defensible answer.
+	if presence == PresencePointer {
+		if inner, _ := unwrapCarrier(elem); inner != PresenceRequired {
+			b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+				"%s is a %s carrier behind a pointer; absence has to be spelled once",
+				bd.goPath, inner)
+			return reg
+		}
+	}
+
 	typ, ok := b.deriveType(elem)
 	if !ok {
 		b.diags.errorf(CodeUnsupportedType, bd.goPath, name,

@@ -95,6 +95,20 @@ func (b Binder) object(
 		case f.Type.Union != nil:
 			b.union(layer, f, child, path, docPath)
 		case f.Type.Object != nil:
+			// Only a pointer carrier can hold "no section": every other object
+			// is materialized whether or not a document declares it.
+			optional := f.Presence == figureout.PresencePointer
+			if child.Kind == Null && optional {
+				// A section a source may leave out may also be erased, which
+				// drops the section rather than emptying it.
+				if !b.AllowNull {
+					b.errorf(layer, path, child.Pos, figureout.CodeSourceUnsupported,
+						"%s does not represent null", b.Source)
+					continue
+				}
+				layer.SetNull(path, b.origin(docPath, pos))
+				continue
+			}
 			if child.Kind != Object {
 				// A ScalarOr field accepts its scalar spelling here; the core
 				// widens it into the object.
@@ -105,6 +119,12 @@ func (b Binder) object(
 				b.errorf(layer, path, child.Pos, figureout.CodeSourceUnsupported,
 					"%s must be an object, got %s", docPath, child.Kind)
 				continue
+			}
+			if optional {
+				// The section is assigned before its members, so a section
+				// whose every member defaults is still a section rather than a
+				// nil pointer.
+				layer.Set(path, figureout.Section{}, b.origin(docPath, pos))
 			}
 			b.object(layer, f.Type.Object, child, path+".", docPath+".", nil)
 		case collection && f.Type.Kind == figureout.TypeList:

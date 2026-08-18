@@ -34,8 +34,12 @@ that target must keep producing `profile.out`.
 - **Null is a merge directive, not a value.** It erases what earlier layers set.
   There is no nullable carrier, and null never reaches the resolved Go value.
 - **Presence picks the function**: `Value` or `Explicit` for plain, `Optional`
-  for `OptionalOf[T]`. Element type is inferred from the carrier; constraints
-  are typed as the element.
+  for `OptionalOf[T]`, `OptionalPtr` / `OptionalObject` / `OptionalObjectFunc`
+  for `*T`. Element type is inferred from the carrier; constraints are typed as
+  the element. Carriers do not stack.
+- **An optional section is present or it is not.** A nesting source says so with
+  a `Section` marker at the object's own path, a flat one by having provided a
+  member. Absent means the pointer stays nil and nothing inside is demanded.
 - **The function says what absence means**: `Explicit` errors, `Value` resolves
   to the zero value, a `Value` collection to an empty one. `Explicit` is honored
   wherever a field can appear, a collection and a list element included. A

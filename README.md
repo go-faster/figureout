@@ -335,15 +335,19 @@ the carrier:
 type Config struct {
 	Port    int
 	Timeout figureout.OptionalOf[time.Duration]   // missing | present
+	Retries *int                                  // missing | present
 }
 
 figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)           // T = int
 figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)  // T = time.Duration
+figureout.OptionalPtr(s, &c.Retries, "retries").AtMost(10)         // T = int
 ```
 
 The type carries the `Of` suffix so the plain name stays free for the
 function. `Value` and `Explicit` reject a carrier field with a diagnostic
 naming the function to use instead, so the two cannot be mixed up silently.
+Stacking carriers — a `*OptionalOf[T]` — is rejected outright: which of the two
+nils means missing has no defensible answer.
 
 **What absence means is the registration function, not a modifier.** A plain
 field is one of two things, and the call site says which:
@@ -372,8 +376,42 @@ or mark it Required, so absence is an error
 ```
 
 `Value(...).Required()` is `Explicit` spelled the long way, and `ApplyDefault`
-replaces the fallback with a value of your own. Optionality itself lives in the
-Go type, never in a pointer.
+replaces the fallback with a value of your own.
+
+**A pointer is a carrier too.** `OptionalOf[T]` is the carrier to write in a
+configuration being written now: it carries the same two states without the
+aliasing. A configuration being *adopted* usually already spells presence as
+`*T`, and that struct is also marshaled, defaulted and compared against nil by
+consumers, so changing its shape for the configuration package's sake ripples
+out of the package entirely. Registering it says so:
+
+```go
+type Config struct {
+	EnableNegativeOffset *bool          // nil, false and true are three answers
+	S3                   *S3Config      // nil is "no section", not "a section of zeroes"
+}
+
+figureout.OptionalPtr(s, &c.EnableNegativeOffset, "enable_negative_offset")
+figureout.OptionalObjectFunc(s, &c.S3, "s3", describeS3)
+```
+
+Constraints are still typed as the element, absence still leaves the carrier
+empty, and the pointer resolution writes is freshly allocated — it aliases
+nothing a source is still holding.
+
+An optional *section* is the part a zero struct cannot express:
+
+```yaml
+# no s3 key      -> nil
+s3: {}           # -> &S3Config{}, a section that defaulted throughout
+s3: {bucket: x}  # -> &S3Config{Bucket: "x"}
+s3: null         # -> nil, and whatever an earlier layer put in it is gone
+```
+
+A member registered with `Explicit` is demanded where the section is present
+and nowhere else, which is what makes "required inside an optional section"
+mean something. A source with no nesting has no name for the section itself, so
+there a section is present whenever any of its members is.
 
 **A collection has a fallback of its own.** An absent list and an empty one are
 the same statement about the world, so a list or map nobody configured resolves

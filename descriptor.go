@@ -303,8 +303,11 @@ func (a accessor) set(obj reflect.Value, v any) error {
 	if err != nil {
 		return err
 	}
-	if a.presence != PresenceRequired {
+	switch a.presence {
+	case PresenceOptional:
 		return fv.Addr().Interface().(carrierRef).carrierSet(v)
+	case PresencePointer:
+		return setPointer(fv, a.elem, v)
 	}
 
 	rv := reflect.ValueOf(v)
@@ -322,10 +325,38 @@ func (a accessor) set(obj reflect.Value, v any) error {
 	return nil
 }
 
+// setPointer writes a value through a pointer carrier, allocating one.
+//
+// The pointer is fresh rather than the caller's: a resolved configuration must
+// not alias a value some source still holds.
+func setPointer(fv reflect.Value, elem reflect.Type, v any) error {
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return errors.Errorf("cannot assign nil to %s", fv.Type())
+	}
+	out := reflect.New(elem)
+	switch {
+	case rv.Type().AssignableTo(elem):
+		out.Elem().Set(rv)
+	case rv.Type().ConvertibleTo(elem):
+		out.Elem().Set(rv.Convert(elem))
+	default:
+		return errors.Errorf("cannot assign %s to %s", rv.Type(), fv.Type())
+	}
+	fv.Set(out)
+	return nil
+}
+
 func (a accessor) get(obj reflect.Value) (any, bool) {
 	fv := obj.FieldByIndex(a.index)
-	if a.presence != PresenceRequired {
+	switch a.presence {
+	case PresenceOptional:
 		return fv.Addr().Interface().(carrierRef).carrierGet()
+	case PresencePointer:
+		if fv.IsNil() {
+			return nil, false
+		}
+		return fv.Elem().Interface(), true
 	}
 	return fv.Interface(), true
 }

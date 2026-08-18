@@ -16,18 +16,34 @@ const (
 	PresenceRequired Presence = iota
 	// PresenceOptional is an [OptionalOf] carrier: missing or present.
 	//
-	// There is deliberately no third state. An explicit null in a source is a
-	// merge directive that erases earlier layers, not a value a field holds,
+	// There is deliberately no nullable state. An explicit null in a source is
+	// a merge directive that erases earlier layers, not a value a field holds,
 	// so nullability never reaches the Go type.
 	PresenceOptional
+	// PresencePointer is a pointer carrier: nil is missing, non-nil present.
+	//
+	// It is [PresenceOptional] written the way encoding/json and go-faster/yaml
+	// already understand. A configuration adopted onto figureout is usually
+	// also marshaled, passed to library code and compared against nil by its
+	// consumers, so moving such a field to [OptionalOf] ripples out of the
+	// configuration package entirely; the pointer is the shape already there.
+	//
+	// It says nothing more than [OptionalOf] does: a nil pointer means no
+	// source provided a value, exactly as an unset carrier does, and null still
+	// never reaches the Go value.
+	PresencePointer
 )
 
 // String implements [fmt.Stringer].
 func (p Presence) String() string {
-	if p == PresenceOptional {
+	switch p {
+	case PresenceOptional:
 		return "optional"
+	case PresencePointer:
+		return "pointer"
+	default:
+		return "required"
 	}
-	return "required"
 }
 
 // carrierInfo is implemented by [OptionalOf]. It is unexported on purpose:
@@ -65,6 +81,12 @@ func (o *OptionalOf[T]) carrierGet() (any, bool) {
 // unwrapCarrier reports the presence modeled by t and the Go type of the
 // value it carries. A type that is not a carrier is required and carries itself.
 func unwrapCarrier(t reflect.Type) (Presence, reflect.Type) {
+	// A pointer is checked first: the pointer-receiver methods of [OptionalOf]
+	// are in a *OptionalOf's method set, so asking a nil one what it carries
+	// would call a method on it.
+	if t.Kind() == reflect.Pointer {
+		return PresencePointer, t.Elem()
+	}
 	if c, ok := reflect.New(t).Elem().Interface().(carrierInfo); ok {
 		return c.carrierPresence(), c.carrierElem()
 	}
