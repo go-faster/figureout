@@ -317,6 +317,12 @@ func (g *generator) types(f *figureout.FieldModel) []string {
 	if len(out) == 0 {
 		out = []string{jsonTypeOf(f.Type)}
 	}
+	// A type that parses itself from text is written as a string wherever its
+	// underlying kind is not one: "256MiB" is how a byte count is spelled, and
+	// a schema that only allowed the integer would reject every document.
+	if f.Type.Text {
+		out = appendUnique(out, typeString)
+	}
 	// Null is a merge directive rather than a value: a source spells it to
 	// erase what earlier layers set. It therefore belongs in a schema that
 	// describes what a source accepts, never in the semantic schema, and only

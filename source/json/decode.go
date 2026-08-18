@@ -22,6 +22,13 @@ type decoder struct{}
 
 // DecodeScalar implements [tree.ScalarDecoder].
 func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureout.Shape) (any, error) {
+	// A type that parses itself from text takes the string spelling, exactly as
+	// encoding/json hands it one: a JSON number is still a number, and the
+	// kinded parser below reads it into the underlying type.
+	if s, ok := n.Value.(string); ok && t.Text {
+		return scalar.ParseText(t, s, "")
+	}
+
 	switch t.Kind {
 	case figureout.TypeBoolean:
 		b, ok := n.Value.(bool)

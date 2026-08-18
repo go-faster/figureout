@@ -147,6 +147,12 @@ type decoder struct{}
 // DecodeScalar implements [tree.ScalarDecoder].
 func (decoder) DecodeScalar(t figureout.Type, n *tree.Node, _ []figureout.Shape) (any, error) {
 	text := n.Text
+	if t.Text {
+		// The resolved tag decides nothing here: "debug" and 1 both reach the
+		// type's own parser, which is what rejects the one that means nothing
+		// rather than binding it to the underlying kind.
+		return scalar.ParseText(t, text, "")
+	}
 	if err := checkTag(t.Kind, n.Tag); err != nil {
 		return nil, err
 	}

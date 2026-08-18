@@ -5,6 +5,7 @@
 package scalar
 
 import (
+	"encoding"
 	"encoding/base64"
 	"math"
 	"reflect"
@@ -24,6 +25,11 @@ const DefaultSeparator = ","
 func ParseText(t figureout.Type, raw, sep string) (any, error) {
 	if sep == "" {
 		sep = DefaultSeparator
+	}
+	// A type that parses itself owns every spelling of itself, so it runs
+	// before the kind-based parser rather than after that one fails.
+	if t.Text {
+		return ParseUnmarshaler(t.Go, raw)
 	}
 
 	switch t.Kind {
@@ -74,6 +80,22 @@ func ParseText(t figureout.Type, raw, sep string) (any, error) {
 	default:
 		return nil, errors.Errorf("cannot represent a %s field as text", t.Kind)
 	}
+}
+
+// ParseUnmarshaler parses raw with the type's own [encoding.TextUnmarshaler].
+//
+// The error it returns is the type's own, so a value is rejected here by
+// whatever rejects it everywhere else in the program.
+func ParseUnmarshaler(want reflect.Type, raw string) (any, error) {
+	rv := reflect.New(want)
+	u, ok := rv.Interface().(encoding.TextUnmarshaler)
+	if !ok {
+		return nil, errors.Errorf("%s does not parse text", want)
+	}
+	if err := u.UnmarshalText([]byte(raw)); err != nil {
+		return nil, err
+	}
+	return rv.Elem().Interface(), nil
 }
 
 // ParseDuration reads a duration written either as a Go duration string or, for

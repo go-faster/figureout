@@ -464,6 +464,38 @@ strings, with their defaults and bounds spelled the way a source accepts them.
 Because the duration spelling keeps working, migrating away is two safe steps:
 add the unit, then add the duration-spelled key and deprecate the old one.
 
+## A type that parses itself
+
+A named scalar carrying its own `UnmarshalText` decides what its spellings
+mean, and figureout defers to it. No registration is involved: implementing
+`encoding.TextUnmarshaler` is the declaration.
+
+```go
+type Bytes int64   // UnmarshalText reads "256MiB"
+type Level int8    // UnmarshalText reads "debug"
+```
+
+```yaml
+max_bytes: 256MiB     # the type's parser
+max_bytes: 256        # the type's parser, which also takes a bare count
+ch_log_level: debug   # the type's parser
+ch_log_level: 1       # unrecognized level "1" — an error, at ch_log_level
+```
+
+That last line is the reason this is not merely a convenience. Bound as the
+`int8` underneath it, `1` resolves cleanly to `warn`, and a document loads
+meaning something other than what it says. The type rejects it, so the
+descriptor does.
+
+The underlying kind still sets the semantic type, so constraints stay typed as
+`Bytes` and the schema keeps its `integer` — with `string` alongside it,
+because that is the other thing the field accepts. YAML hands the type the
+scalar's text whatever its resolved tag; JSON hands it a string and reads a
+number as the underlying kind, which is what `encoding/json` does with the same
+type. Only a named scalar qualifies: a struct or a slice is a shape a
+descriptor can describe, and collapsing it to text would hide the description
+rather than add one.
+
 ## Secrets
 
 `Hidden` is documentation metadata and does nothing else, which leaves a token
