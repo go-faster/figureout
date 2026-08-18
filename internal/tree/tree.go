@@ -120,9 +120,15 @@ func ShapeOf(n *Node) figureout.ShapeKind {
 
 // Field is one member of an object node.
 type Field struct {
-	Key   string
-	Pos   Pos
-	Value *Node
+	// Key is the member name, which is text: a path is format-neutral, and every
+	// name a descriptor declares is spelled as one.
+	Key string
+	// KeyTag is the format's own type marker for the key, such as a YAML
+	// "!!int". It matters only inside an opaque subtree, where the key is not a
+	// name the descriptor declared but a value the other program will read.
+	KeyTag string
+	Pos    Pos
+	Value  *Node
 }
 
 // Field looks up an object member by key. The last duplicate wins, matching

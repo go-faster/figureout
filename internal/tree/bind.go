@@ -22,10 +22,11 @@ type ScalarDecoder interface {
 	// values that are not fields, such as list elements.
 	DecodeScalar(t figureout.Type, n *Node, accepts []figureout.Shape) (any, error)
 
-	// DecodeAny converts a scalar node into the format's own untyped Go value,
-	// for an opaque subtree no semantic type describes. It is what the format's
-	// own decoder would produce for an "any", so a passthrough carries exactly
-	// what the program it is handed to would have read.
+	// DecodeAny converts a whole node into the format's own untyped Go value,
+	// for an opaque subtree no semantic type describes. Structure is the
+	// format's here as much as scalars are — YAML picks a map[any]any as soon
+	// as one key is not a string, JSON never does — so a passthrough carries
+	// exactly what the program it is handed to would have read.
 	DecodeAny(n *Node) (any, error)
 }
 
@@ -520,44 +521,13 @@ func (b Binder) opaque(
 		return
 	}
 
-	v, err := b.untyped(node)
+	v, err := b.Decoder.DecodeAny(node)
 	if err != nil {
 		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
 			figureout.Redact(f, err.Error(), node.Text, node.Value))
 		return
 	}
 	layer.Set(path, v, origin)
-}
-
-// untyped converts a node into the format's own untyped representation:
-// map[string]any, []any and whatever the format resolves a scalar to.
-func (b Binder) untyped(n *Node) (any, error) {
-	switch n.Kind {
-	case Null:
-		return nil, nil
-	case Array:
-		out := make([]any, 0, len(n.Items))
-		for i, item := range n.Items {
-			v, err := b.untyped(item)
-			if err != nil {
-				return nil, errors.Wrapf(err, "element %d", i)
-			}
-			out = append(out, v)
-		}
-		return out, nil
-	case Object:
-		out := make(map[string]any, len(n.Fields))
-		for _, f := range n.Fields {
-			v, err := b.untyped(f.Value)
-			if err != nil {
-				return nil, errors.Wrapf(err, "key %q", f.Key)
-			}
-			out[f.Key] = v
-		}
-		return out, nil
-	default:
-		return b.Decoder.DecodeAny(n)
-	}
 }
 
 func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node, path, docPath string, pos Pos) {

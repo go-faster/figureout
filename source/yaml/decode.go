@@ -85,9 +85,10 @@ func convertNode(n *yaml.Node) (*tree.Node, error) {
 				return nil, err
 			}
 			out.Fields = append(out.Fields, tree.Field{
-				Key:   key.Value,
-				Pos:   tree.Pos{Line: key.Line, Col: key.Column},
-				Value: child,
+				Key:    key.Value,
+				KeyTag: key.ShortTag(),
+				Pos:    tree.Pos{Line: key.Line, Col: key.Column},
+				Value:  child,
 			})
 		}
 
@@ -174,15 +175,81 @@ func (decoder) DecodeScalar(t figureout.Type, n *tree.Node, _ []figureout.Shape)
 
 // DecodeAny implements [tree.ScalarDecoder].
 //
-// The resolved tag is handed back to go-faster/yaml along with the text, so a
-// passthrough carries what "yaml.Unmarshal(data, &any)" would have produced for
-// the same scalar — a quoted "512" stays a string, and an unquoted one is an
-// integer.
-func (decoder) DecodeAny(n *tree.Node) (any, error) {
+// It reproduces what "yaml.Unmarshal(data, &any)" would have produced for the
+// same document, which is the whole contract of a passthrough: the block is
+// handed on to a program that will read it as YAML, so it has to arrive as YAML
+// reads it. A quoted "512" stays a string, an unquoted one is an integer, and a
+// mapping is a map[string]any only while every key of it is a string.
+func (d decoder) DecodeAny(n *tree.Node) (any, error) {
+	switch n.Kind {
+	case tree.Null:
+		return nil, nil
+	case tree.Array:
+		out := make([]any, 0, len(n.Items))
+		for i, item := range n.Items {
+			v, err := d.DecodeAny(item)
+			if err != nil {
+				return nil, errors.Wrapf(err, "element %d", i)
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	case tree.Object:
+		return d.anyMapping(n)
+	default:
+		return d.anyScalar(n.Tag, n.Text)
+	}
+}
+
+// anyMapping picks the map type YAML picks: a string-keyed one while every key
+// resolves to a string, and a general one as soon as one does not.
+//
+// The tree spells every key as text, because a configuration path is text. In a
+// passthrough the key is not a path — it is a value the other program will
+// read — so the tag it resolved with is what decides.
+func (d decoder) anyMapping(n *tree.Node) (any, error) {
+	keys := make([]any, 0, len(n.Fields))
+	values := make([]any, 0, len(n.Fields))
+	stringKeys := true
+
+	for _, f := range n.Fields {
+		if f.KeyTag != tagStr {
+			stringKeys = false
+		}
+		key, err := d.anyScalar(f.KeyTag, f.Key)
+		if err != nil {
+			return nil, errors.Wrapf(err, "key %q", f.Key)
+		}
+		value, err := d.DecodeAny(f.Value)
+		if err != nil {
+			return nil, errors.Wrapf(err, "key %q", f.Key)
+		}
+		keys = append(keys, key)
+		values = append(values, value)
+	}
+
+	if stringKeys {
+		out := make(map[string]any, len(keys))
+		for i, k := range keys {
+			out[k.(string)] = values[i]
+		}
+		return out, nil
+	}
+
+	out := make(map[any]any, len(keys))
+	for i, k := range keys {
+		out[k] = values[i]
+	}
+	return out, nil
+}
+
+// anyScalar resolves one scalar the way YAML does, by handing its tag and text
+// back to go-faster/yaml rather than re-deciding what they mean here.
+func (decoder) anyScalar(tag, text string) (any, error) {
 	var v any
-	node := yaml.Node{Kind: yaml.ScalarNode, Tag: n.Tag, Value: n.Text}
+	node := yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: text}
 	if err := node.Decode(&v); err != nil {
-		return nil, errors.Wrapf(err, "scalar %q", n.Text)
+		return nil, errors.Wrapf(err, "scalar %q", text)
 	}
 	return v, nil
 }
