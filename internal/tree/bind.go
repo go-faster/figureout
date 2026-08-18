@@ -264,7 +264,11 @@ func (b Binder) elements(
 		}
 		seen[key] = i
 
-		b.object(layer, elem, item, figureout.ElementPath(path, key)+".", where+".", nil)
+		elemPath := figureout.ElementPath(path, key)
+		// The element is assigned before its members, so an element whose every member is
+		// absent still claims a slot rather than vanishing from the list.
+		layer.Set(elemPath, figureout.Element{}, b.origin(where, item.Pos))
+		b.object(layer, elem, item, elemPath+".", where+".", nil)
 	}
 }
 
@@ -340,6 +344,7 @@ func (b Binder) entries(
 				"%s must be an object, got %s", where, entry.Value.Kind)
 			continue
 		}
+		layer.Set(entryPath, figureout.Element{}, b.origin(where, entry.Pos))
 		b.object(layer, elem, entry.Value, entryPath+".", where+".", nil)
 	}
 }

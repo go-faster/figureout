@@ -87,6 +87,14 @@ func CanonicalPath(path string) string {
 // about it" — an empty list has no elements to speak for it either way.
 type Collection struct{}
 
+// Element is the value a source assigns to one element of a collection, to say that this layer
+// contained it.
+//
+// An element whose every member is absent has no assignment of its own to allocate its slot, and
+// an element that resolves entirely to defaults is still an element: without a marker of its own
+// it would vanish from the list rather than materialize with its defaults.
+type Element struct{}
+
 // collection is the accumulated state of one list or map across layers.
 type collection struct {
 	// order is the element subscripts in the order they will materialize:
@@ -266,6 +274,12 @@ func (m *Model) foldCollection(res *resolution, a Assignment, f *FieldModel, rep
 
 	if resolved == a.Path && !strings.ContainsRune(a.Path, elementOpen) {
 		return false, ""
+	}
+
+	// The element marker exists to allocate the slot, which resolveElements has
+	// just done. It carries nothing further.
+	if _, ok := a.Value.(Element); ok && a.State == ValuePresent {
+		return true, ""
 	}
 
 	// A null at an element path removes the element, which is how a later layer

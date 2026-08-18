@@ -466,6 +466,35 @@ func authDescriptor(t *testing.T) *figureout.Descriptor[authConfig] {
 	return d
 }
 
+// TestElementWithNoMembers pins that an element resolving entirely to defaults is still an
+// element. Its members produce no assignments, so nothing but the element itself can claim its
+// slot, and a list that quietly loses an entry is indistinguishable from one that never had it.
+func TestElementWithNoMembers(t *testing.T) {
+	cfg, _, err := authDescriptor(t).Resolve(yaml.Bytes([]byte("auth:\n  - {}\n  - type: bearer\n  - {}\n")))
+	require.NoError(t, err)
+	require.Equal(t, []authenticator{
+		{Tokens: []authToken{}, Limits: map[string]authToken{}},
+		{Type: "bearer", Tokens: []authToken{}, Limits: map[string]authToken{}},
+		{Tokens: []authToken{}, Limits: map[string]authToken{}},
+	}, cfg.Auth)
+}
+
+func TestMapEntryWithNoMembers(t *testing.T) {
+	type entries struct {
+		Limits map[string]authToken
+	}
+	d, err := figureout.Derive(func(c *entries, s *figureout.Schema[entries]) {
+		figureout.MapOf(s, &c.Limits, "limits", func(e *authToken, s *figureout.Schema[authToken]) {
+			figureout.Value(s, &e.Token, "token")
+		})
+	})
+	require.NoError(t, err)
+
+	cfg, _, err := d.Resolve(yaml.Bytes([]byte("limits:\n  soft: {}\n")))
+	require.NoError(t, err)
+	require.Equal(t, map[string]authToken{"soft": {}}, cfg.Limits)
+}
+
 func TestCollectionNestedInElement(t *testing.T) {
 	cfg, _, err := authDescriptor(t).Resolve(yaml.Bytes([]byte(`
 auth:
