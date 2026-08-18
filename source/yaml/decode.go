@@ -172,6 +172,21 @@ func (decoder) DecodeScalar(t figureout.Type, n *tree.Node, _ []figureout.Shape)
 	return scalar.ParseText(t, text, "")
 }
 
+// DecodeAny implements [tree.ScalarDecoder].
+//
+// The resolved tag is handed back to go-faster/yaml along with the text, so a
+// passthrough carries what "yaml.Unmarshal(data, &any)" would have produced for
+// the same scalar — a quoted "512" stays a string, and an unquoted one is an
+// integer.
+func (decoder) DecodeAny(n *tree.Node) (any, error) {
+	var v any
+	node := yaml.Node{Kind: yaml.ScalarNode, Tag: n.Tag, Value: n.Text}
+	if err := node.Decode(&v); err != nil {
+		return nil, errors.Wrapf(err, "scalar %q", n.Text)
+	}
+	return v, nil
+}
+
 // canonicalNumber re-spells a YAML number the way the shared text parser reads it, using YAML's
 // own resolution so the two can never disagree about what a scalar is.
 func canonicalNumber(text string) (string, error) {

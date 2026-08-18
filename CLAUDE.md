@@ -57,6 +57,11 @@ that target must keep producing `profile.out`.
   Union tags are laid out inline, as siblings of the variant's members.
 - **Every exported field must be registered, delegated, covered or ignored.**
   Completeness failures are the point, not an inconvenience.
+- **`Opaque` is the only hole in strictness, and it is spelled.** A passthrough
+  carries a subtree verbatim and exempts it from `DisallowUnknownFields`, so
+  `Reason` is mandatory. Nothing inside has names, constraints or a schema; the
+  binder never descends, which is what makes the exemption structural rather
+  than a check somebody remembered.
 - Model types are suffixed (`FieldModel`, `ObjectModel`, `VariantModel`)
   because `Object` and `Variant` are registration functions.
 - **An empty input is absent.** An empty environment variable and a zero-length

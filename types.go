@@ -23,6 +23,9 @@ const (
 	TypeMap
 	TypeObject
 	TypeUnion
+	// TypeOpaque is a subtree carried verbatim, whose shape belongs to another
+	// program. See [Opaque].
+	TypeOpaque
 )
 
 var typeKindNames = [...]string{
@@ -38,6 +41,7 @@ var typeKindNames = [...]string{
 	TypeMap:       "map",
 	TypeObject:    "object",
 	TypeUnion:     "union",
+	TypeOpaque:    "opaque",
 }
 
 // String implements [fmt.Stringer].

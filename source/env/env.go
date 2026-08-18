@@ -230,6 +230,10 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 			// construction — so binding both would collide by design. Use
 			// Alias when a variable really did exist under an old name.
 			continue
+		case f.Type.Kind == figureout.TypeOpaque:
+			// A subtree nothing describes has no flat spelling either: the
+			// names below it belong to another program, not to this source.
+			continue
 		case isCollection(f):
 			// A list or map of objects has no spelling here. An index
 			// convention would be a second, worse way to write the same

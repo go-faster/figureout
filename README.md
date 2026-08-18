@@ -798,6 +798,39 @@ The two spellings never half-merge across layers. A widened scalar stands for
 the whole object, so whichever spelling a later layer uses replaces the other
 outright.
 
+## Another program's configuration
+
+A configuration that embeds another program's has a block it cannot describe
+and must not validate. `Opaque` carries it verbatim:
+
+```go
+// an OpenTelemetry Collector configuration, handed to the collector as-is
+Collector map[string]any `yaml:"otelcol"`
+
+figureout.Opaque(s, &c.Collector, "otelcol",
+	figureout.Reason("handed to the collector verbatim"))
+```
+
+The field decodes to whatever the document held — objects as `map[string]any`,
+arrays as `[]any`, scalars as the format resolved them, so a quoted `"512"`
+stays a string — and its whole subtree is exempt from
+`DisallowUnknownFields()`. That exemption is the load-bearing part: strict
+decoding is why a descriptor is worth adopting, and a passthrough is precisely
+where strictness has to stop, because figureout cannot know which keys the
+other program accepts and a version skew in *that* program is not this one's
+business.
+
+`Reason` is therefore required, so the hole reads as one at the declaration
+site. It is documentation: JSON Schema emits a permissive object carrying it,
+the Markdown reference renders the field as a documented passthrough rather
+than omitting it, and a source with no nesting skips it the way it skips a
+collection of objects.
+
+Nothing inside a passthrough has a name, a constraint, a default, provenance or
+a schema. It is not an escape hatch for a block whose shape is yours to state —
+reach for `ObjectFunc` there. `Ignore` remains the other end: it drops the
+value, `Opaque` passes it through.
+
 ## Reference documentation
 
 `schema/docs` renders the compiled model as Markdown, so the documented

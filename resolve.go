@@ -557,6 +557,14 @@ func (m *Model) applyDefault(f *FieldModel, v reflect.Value, path string, rep *R
 		}
 		return
 	}
+	// A passthrough nobody wrote is the zero value, written directly: an
+	// interface's zero is an untyped nil, which no assignment can carry.
+	if f.Type.Kind == TypeOpaque && !f.Required() {
+		if err := f.acc.setZero(v); err != nil {
+			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
+		}
+		return
+	}
 	// A zero-defaulted field is written rather than left alone: the caller's
 	// destination may not be zero, and resolution decides the value.
 	if f.ZeroDefault() {

@@ -21,6 +21,12 @@ type ScalarDecoder interface {
 	// takes a string as well as an integer decodes both; it is nil for
 	// values that are not fields, such as list elements.
 	DecodeScalar(t figureout.Type, n *Node, accepts []figureout.Shape) (any, error)
+
+	// DecodeAny converts a scalar node into the format's own untyped Go value,
+	// for an opaque subtree no semantic type describes. It is what the format's
+	// own decoder would produce for an "any", so a passthrough carries exactly
+	// what the program it is handed to would have read.
+	DecodeAny(n *Node) (any, error)
 }
 
 // AliasOption adds accepted member names, tried after the primary name.
@@ -88,6 +94,13 @@ func (b Binder) object(
 		// including object and array ones the semantic type cannot describe.
 		if dec, ok := decoderOf(f, b.Source); ok {
 			b.decode(layer, f, dec, child, path, docPath, pos)
+			continue
+		}
+
+		// A passthrough is bound whole and never descended into, which is what
+		// exempts its subtree from the unknown-member report below.
+		if f.Type.Kind == figureout.TypeOpaque {
+			b.opaque(layer, f, child, path, docPath, pos)
 			continue
 		}
 
@@ -483,6 +496,71 @@ func (b Binder) shorthand(
 		return
 	}
 	layer.Set(path, v, origin)
+}
+
+// opaque binds a subtree verbatim, whatever it holds.
+//
+// Nothing here is checked against a shape: the descriptor does not describe
+// what is inside, so there is nothing to check it against, and the field's own
+// Go type is what finally decides whether the value fits.
+func (b Binder) opaque(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	node *Node,
+	path, docPath string,
+	pos Pos,
+) {
+	origin := b.origin(docPath, pos)
+	if node.Kind == Null {
+		// Null stays a merge directive even here: it erases the block rather
+		// than passing a nil through as its contents.
+		if !b.AllowNull {
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(path, origin)
+		return
+	}
+
+	v, err := b.untyped(node)
+	if err != nil {
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
+		return
+	}
+	layer.Set(path, v, origin)
+}
+
+// untyped converts a node into the format's own untyped representation:
+// map[string]any, []any and whatever the format resolves a scalar to.
+func (b Binder) untyped(n *Node) (any, error) {
+	switch n.Kind {
+	case Null:
+		return nil, nil
+	case Array:
+		out := make([]any, 0, len(n.Items))
+		for i, item := range n.Items {
+			v, err := b.untyped(item)
+			if err != nil {
+				return nil, errors.Wrapf(err, "element %d", i)
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	case Object:
+		out := make(map[string]any, len(n.Fields))
+		for _, f := range n.Fields {
+			v, err := b.untyped(f.Value)
+			if err != nil {
+				return nil, errors.Wrapf(err, "key %q", f.Key)
+			}
+			out[f.Key] = v
+		}
+		return out, nil
+	default:
+		return b.Decoder.DecodeAny(n)
+	}
 }
 
 func (b Binder) leaf(layer *figureout.Layer, f *figureout.FieldModel, node *Node, path, docPath string, pos Pos) {
