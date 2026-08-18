@@ -434,3 +434,70 @@ func siteBytes(sites []site) []int64 {
 	}
 	return out
 }
+
+type authToken struct {
+	Token string
+}
+
+type authenticator struct {
+	Type   string
+	Tokens []authToken
+	Limits map[string]authToken
+}
+
+type authConfig struct {
+	Auth []authenticator
+}
+
+func authDescriptor(t *testing.T) *figureout.Descriptor[authConfig] {
+	t.Helper()
+	d, err := figureout.Derive(func(c *authConfig, s *figureout.Schema[authConfig]) {
+		figureout.ListOf(s, &c.Auth, "auth", func(e *authenticator, s *figureout.Schema[authenticator]) {
+			figureout.Value(s, &e.Type, "type")
+			figureout.ListOf(s, &e.Tokens, "tokens", func(e *authToken, s *figureout.Schema[authToken]) {
+				figureout.Value(s, &e.Token, "token")
+			})
+			figureout.MapOf(s, &e.Limits, "limits", func(e *authToken, s *figureout.Schema[authToken]) {
+				figureout.Value(s, &e.Token, "token")
+			})
+		})
+	})
+	require.NoError(t, err)
+	return d
+}
+
+func TestCollectionNestedInElement(t *testing.T) {
+	cfg, _, err := authDescriptor(t).Resolve(yaml.Bytes([]byte(`
+auth:
+  - type: bearer
+    tokens:
+      - token: secret
+      - token: other
+    limits:
+      soft: {token: x}
+`)))
+	require.NoError(t, err)
+	require.Equal(t, []authenticator{{
+		Type:   "bearer",
+		Tokens: []authToken{{Token: "secret"}, {Token: "other"}},
+		Limits: map[string]authToken{"soft": {Token: "x"}},
+	}}, cfg.Auth, "a collection nested in an element resolves like any other")
+}
+
+func TestCollectionNestedInElementReplaces(t *testing.T) {
+	cfg, _, err := authDescriptor(t).Resolve(
+		yaml.Bytes([]byte("auth:\n  - type: bearer\n    tokens: [{token: a}, {token: b}]\n")),
+		yaml.Bytes([]byte("auth:\n  - type: bearer\n    tokens: [{token: c}]\n")),
+	)
+	require.NoError(t, err)
+	require.Equal(t, []authToken{{Token: "c"}}, cfg.Auth[0].Tokens)
+}
+
+func TestCollectionNestedInElementErased(t *testing.T) {
+	cfg, _, err := authDescriptor(t).Resolve(
+		yaml.Bytes([]byte("auth:\n  - type: bearer\n    tokens: [{token: a}]\n")),
+		yaml.Bytes([]byte("auth:\n  - type: bearer\n    tokens: null\n")),
+	)
+	require.NoError(t, err)
+	require.Empty(t, cfg.Auth[0].Tokens)
+}

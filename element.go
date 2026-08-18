@@ -244,22 +244,28 @@ func (r *resolution) startLayer() {
 // the assignment should fold under, which differs from the one the source wrote
 // whenever an element had to be allocated a slot.
 func (m *Model) foldCollection(res *resolution, a Assignment, f *FieldModel, rep *Report) (handled bool, path string) {
+	resolved := a.Path
+	if strings.ContainsRune(a.Path, elementOpen) {
+		// A collection nested in an element carries a subscript of its own, so
+		// its slot has to be allocated before the marker can be recognized.
+		var ok bool
+		if resolved, ok = m.resolveElements(res, a.Path); !ok {
+			return true, ""
+		}
+	}
+
 	// The collection itself: a marker saying this layer provided it, or a null
 	// erasing it outright.
-	if f != nil && a.Path == f.Path {
+	if f != nil && CanonicalPath(resolved) == f.Path {
 		if _, ok := collectionOf(f); ok {
+			a.Path = resolved
 			m.foldCollectionItself(res, a, f)
 			return true, ""
 		}
 	}
 
-	if !strings.ContainsRune(a.Path, elementOpen) {
+	if resolved == a.Path && !strings.ContainsRune(a.Path, elementOpen) {
 		return false, ""
-	}
-
-	resolved, ok := m.resolveElements(res, a.Path)
-	if !ok {
-		return true, ""
 	}
 
 	// A null at an element path removes the element, which is how a later layer
