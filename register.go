@@ -243,8 +243,20 @@ func objectFunc[C any](
 				"nil describe function for nested object %q", name)
 		case !b.objectPresence(reg, want):
 		default:
-			reg.object = describeNested(b, reg, describe)
-			reg.typ = Type{Kind: TypeObject, Go: reg.acc.elem, Object: reg.object}
+			obj, fresh := describeNested(b, reg, describe)
+			reg.object = obj
+			reg.typ = Type{Kind: TypeObject, Go: reg.acc.elem, Object: obj}
+			if !fresh && want != optionalSection {
+				// The description is still running further up the stack, so
+				// this field re-enters the object that encloses it. A section
+				// that is always there and always contains itself is an
+				// infinite value: resolution would allocate one level per level
+				// forever. Recursion has to reach somewhere it can stop.
+				b.diags.errorf(CodeUnsupportedType, reg.goName, name,
+					"%s re-enters %s, which already encloses it; recursion has to pass "+
+						"through an optional section or a collection, which is where it ends",
+					reg.goName, reg.acc.elem)
+			}
 		}
 	}
 	b.applyOptions(reg, opts)
@@ -253,14 +265,20 @@ func objectFunc[C any](
 
 // describeNested compiles a child object with its own builder, rooted at the
 // nested value inside this builder's synthetic object.
-func describeNested[C any](b *builder, reg *registration, describe func(*C, *Schema[C])) *ObjectModel {
+//
+// It reports whether the object was described here. A description already
+// running further up the stack is not re-entered: the field binds to the model
+// being built, and the level below it is a level a source has to provide before
+// it exists.
+func describeNested[C any](b *builder, reg *registration, describe func(*C, *Schema[C])) (*ObjectModel, bool) {
 	rv := reg.acc.descend(b.root)
-	nb := newBuilder(rv, reg.goName, b.opts)
-	describe(rv.Addr().Interface().(*C), &Schema[C]{b: nb})
-	obj := nb.compile()
+	obj, nb := openObject(b, rv, reg.goName, describe)
+	if nb == nil {
+		return obj, false
+	}
 	b.diags = append(b.diags, nb.diags...)
 	b.invariants = append(b.invariants, lift(nb.invariants, reg.name, reg.acc)...)
-	return obj
+	return obj, true
 }
 
 // IgnoreOption customizes an ignore declaration.

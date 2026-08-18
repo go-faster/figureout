@@ -251,7 +251,11 @@ func (r *resolution) startLayer() {
 // It reports whether the assignment was fully handled, and otherwise the path
 // the assignment should fold under, which differs from the one the source wrote
 // whenever an element had to be allocated a slot.
-func (m *Model) foldCollection(res *resolution, a Assignment, f *FieldModel, rep *Report) (handled bool, path string) {
+//
+// own says the assignment is at the field's own path. It cannot be derived by
+// comparing the path to [FieldModel.Path]: a recursive field has unboundedly
+// many spellings and only the shallowest one is canonical.
+func (m *Model) foldCollection(res *resolution, a Assignment, f *FieldModel, own bool, rep *Report) (handled bool, path string) {
 	resolved := a.Path
 	if strings.ContainsRune(a.Path, elementOpen) {
 		// A collection nested in an element carries a subscript of its own, so
@@ -264,7 +268,7 @@ func (m *Model) foldCollection(res *resolution, a Assignment, f *FieldModel, rep
 
 	// The collection itself: a marker saying this layer provided it, or a null
 	// erasing it outright.
-	if f != nil && CanonicalPath(resolved) == f.Path {
+	if f != nil && own {
 		if _, ok := collectionOf(f); ok {
 			a.Path = resolved
 			m.foldCollectionItself(res, a, f)
@@ -372,4 +376,80 @@ func (f *FieldModel) MergeKey() (*FieldModel, bool) {
 		return nil, false
 	}
 	return f.mergeKey, true
+}
+
+// walkPath resolves a canonical path against the object graph, one segment at a
+// time.
+//
+// It is what [Model.FieldByPath] falls back to: a recursive descriptor has
+// unboundedly many paths, so only the shallowest spelling of each field can be
+// indexed, and everything below one has to be found by following the shape the
+// path describes. A subscript descends into the elements of a collection, and a
+// union is searched variant by variant, exactly as the binder does.
+func (o *ObjectModel) walkPath(path string) (*FieldModel, bool) {
+	for {
+		segment, rest, deeper := cutSegment(path)
+		name, subscripted := cutSubscript(segment)
+		f, ok := o.Field(name)
+		if !ok {
+			return nil, false
+		}
+		if !deeper && !subscripted {
+			return f, true
+		}
+
+		elem, collection := collectionOf(f)
+		switch {
+		case subscripted:
+			// "sites[0]" names an element, which no field describes on its own.
+			if !collection || !deeper {
+				return nil, false
+			}
+			o = elem
+		case f.Type.Object != nil:
+			o = f.Type.Object
+		case f.Type.Union != nil:
+			// A variant's members are siblings of the tag, so the remainder is
+			// resolved against each variant rather than under a level of its own.
+			for _, v := range f.Type.Union.Variants {
+				if found, ok := v.Object.walkPath(rest); ok {
+					return found, true
+				}
+			}
+			return nil, false
+		default:
+			return nil, false
+		}
+		path = rest
+	}
+}
+
+// cutSegment splits off the first path segment. A dot inside a subscript
+// belongs to the key, not to the path: "proxies[docs.example].url" is two
+// segments, not three.
+func cutSegment(path string) (segment, rest string, deeper bool) {
+	depth := 0
+	for i, r := range path {
+		switch r {
+		case elementOpen:
+			depth++
+		case elementClose:
+			depth--
+		case '.':
+			if depth == 0 {
+				return path[:i], path[i+1:], true
+			}
+		}
+	}
+	return path, "", false
+}
+
+// cutSubscript splits a segment into the field name and whether a subscript
+// followed it.
+func cutSubscript(segment string) (name string, subscripted bool) {
+	i := strings.IndexByte(segment, elementOpen)
+	if i < 0 || segment[len(segment)-1] != elementClose {
+		return segment, false
+	}
+	return segment[:i], true
 }

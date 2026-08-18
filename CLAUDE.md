@@ -62,6 +62,16 @@ that target must keep producing `profile.out`.
   `Reason` is mandatory. Nothing inside has names, constraints or a schema; the
   binder never descends, which is what makes the exemption structural rather
   than a check somebody remembered.
+- **A configuration type may refer to itself, so the model is a graph.** The
+  cycle is in the type graph alone: recursion reaches a descriptor only through
+  a pointer, a slice or a map, each of which may be absent, so every value is a
+  finite tree. A model is published before its `describe` runs, and a nested
+  registration that re-enters an open one binds to it instead of descending —
+  `FieldModel.Recursive` is that back-edge. Only the shallowest spelling of a
+  field is indexed; deeper paths are walked. A recursion through a *required*
+  section is an infinite value and a diagnostic. jsonschema emits `$defs`/`$ref`
+  (the root as `#`), docs renders the object once and links back, and env and
+  file stop at the cycle the way they already stop at a collection of objects.
 - Model types are suffixed (`FieldModel`, `ObjectModel`, `VariantModel`)
   because `Object` and `Variant` are registration functions.
 - **An empty input is absent.** An empty environment variable and a zero-length

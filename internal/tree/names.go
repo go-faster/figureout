@@ -45,6 +45,12 @@ func (n *namer) object(obj *figureout.ObjectModel, base, prefix string) {
 			// documented there rather than repeated under the old path.
 			continue
 		}
+		if _, ok := f.Recursive(); ok {
+			// The object below is one that already encloses this field. Its
+			// members are named where they are declared: naming them again
+			// under every path that re-enters them would not terminate.
+			continue
+		}
 
 		switch elem, collection := f.Elements(); {
 		case f.Type.Union != nil:

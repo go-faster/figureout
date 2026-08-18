@@ -144,11 +144,36 @@ type builder struct {
 	invariants []invariant
 	diags      Diagnostics
 	opts       schemaOptions
+	// open is the object models whose describe function has not returned yet,
+	// shared by every builder of one derivation. See [building].
+	open building
 }
+
+// buildKey identifies one object description: the Go type and the function
+// describing it. Both matter — a type may be described more than one way, and
+// one function describes exactly one type.
+type buildKey struct {
+	typ reflect.Type
+	fn  uintptr
+}
+
+// building holds the model of every object whose description is still running.
+//
+// A configuration type is allowed to refer to itself: a node with a child node,
+// a rule with nested rules. There is no cycle in the values — every instance is
+// a finite tree, because recursion reaches figureout only through a pointer, a
+// slice or a map, and each of those may simply be absent. The cycle is in the
+// type graph alone.
+//
+// Registering the model before its description runs is what lets a nested
+// registration bind to the object being built instead of descending into it
+// again. Without it the builder materializes the type graph eagerly and never
+// reaches the bottom, because there is not one.
+type building map[buildKey]*ObjectModel
 
 // newBuilder starts a builder over an addressable struct value. goPath prefixes
 // the Go paths reported in diagnostics.
-func newBuilder(root reflect.Value, goPath string, opts schemaOptions) *builder {
+func newBuilder(root reflect.Value, goPath string, opts schemaOptions, open building) *builder {
 	return &builder{
 		rootType: root.Type(),
 		root:     root,
@@ -156,7 +181,38 @@ func newBuilder(root reflect.Value, goPath string, opts schemaOptions) *builder 
 		bind:     newBinder(root, goPath),
 		stack:    []*container{{}},
 		opts:     opts,
+		open:     open,
 	}
+}
+
+// openObject compiles describe against rv, having first published the model it
+// will produce under (C, describe).
+//
+// It returns the nested builder, or nil when the model was already open: the
+// description is then already running further up the stack, and re-entering it
+// would not terminate. The caller binds to the model that is being built, which
+// is what turns a recursive descriptor from an infinite tree into a graph.
+func openObject[C any](
+	b *builder,
+	rv reflect.Value,
+	goPath string,
+	describe func(*C, *Schema[C]),
+) (*ObjectModel, *builder) {
+	key := buildKey{typ: reflect.TypeFor[C](), fn: reflect.ValueOf(describe).Pointer()}
+	if obj, ok := b.open[key]; ok {
+		return obj, nil
+	}
+
+	obj := &ObjectModel{Go: rv.Type()}
+	b.open[key] = obj
+	defer delete(b.open, key)
+
+	nb := newBuilder(rv, goPath, b.opts, b.open)
+	describe(rv.Addr().Interface().(*C), &Schema[C]{b: nb})
+	// The model is filled in place: whatever bound to it while it was open
+	// holds this very pointer.
+	*obj = *nb.compile()
+	return obj, nb
 }
 
 // add records a declaration in the innermost open container.
@@ -200,11 +256,15 @@ func Derive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) (*Descri
 		return nil, errors.Errorf("configuration type must be a struct, got %s", rv.Type())
 	}
 
-	b := newBuilder(rv, rv.Type().Name(), options)
+	// The root is published like any other object, so a descriptor that nests
+	// itself binds back to its own model rather than deriving a second one.
+	obj := &ObjectModel{Go: rv.Type()}
+	open := building{buildKey{typ: reflect.TypeFor[T](), fn: reflect.ValueOf(describe).Pointer()}: obj}
+	b := newBuilder(rv, rv.Type().Name(), options, open)
 	describe(root, &Schema[T]{b: b})
 	runtime.KeepAlive(root)
 
-	obj := b.compile()
+	*obj = *b.compile()
 	if err := b.diags.Err(); err != nil {
 		return nil, err
 	}
@@ -213,7 +273,7 @@ func Derive[T any](describe func(*T, *Schema[T]), opts ...SchemaOption) (*Descri
 	for _, inv := range b.invariants {
 		model.invariants = append(model.invariants, InvariantModel{Name: inv.name})
 	}
-	prefixPaths(obj, "")
+	prefixPaths(obj, "", map[*ObjectModel]bool{})
 	model.reindex()
 	return &Descriptor[T]{model: model, invariants: b.invariants}, nil
 }
@@ -445,8 +505,17 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 	return root
 }
 
-// prefixPaths assigns canonical dotted paths to nested fields.
-func prefixPaths(o *ObjectModel, prefix string) {
+// prefixPaths assigns canonical dotted paths to nested fields, and marks the
+// fields that close a cycle.
+//
+// open is the objects enclosing this one. A field whose object is already open
+// re-enters it: the paths below it are unbounded, so the field is recorded as
+// recursive and the walk stops there. Its own path is still the shallowest
+// spelling of it, which is the one every target names it by.
+func prefixPaths(o *ObjectModel, prefix string, open map[*ObjectModel]bool) {
+	open[o] = true
+	defer delete(open, o)
+
 	for _, f := range o.Fields {
 		f.Path = prefix + f.Name
 		if f.movedTo != nil {
@@ -457,16 +526,28 @@ func prefixPaths(o *ObjectModel, prefix string) {
 		}
 		switch {
 		case f.Type.Object != nil:
-			prefixPaths(f.Type.Object, f.Path+".")
+			if open[f.Type.Object] {
+				f.recursive = f.Type.Object
+				continue
+			}
+			prefixPaths(f.Type.Object, f.Path+".", open)
 		case f.Type.Union != nil:
 			for _, v := range f.Type.Union.Variants {
-				prefixPaths(v.Object, f.Path+".")
+				if open[v.Object] {
+					f.recursive = v.Object
+					continue
+				}
+				prefixPaths(v.Object, f.Path+".", open)
 			}
 		}
 		if elem, ok := collectionOf(f); ok {
+			if open[elem] {
+				f.recursive = elem
+				continue
+			}
 			// Every element shares one description, so the model spells the
 			// subscript empty: "sites[].max_bytes".
-			prefixPaths(elem, ElementPath(f.Path, "")+".")
+			prefixPaths(elem, ElementPath(f.Path, "")+".", open)
 		}
 	}
 }

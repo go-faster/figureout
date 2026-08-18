@@ -71,6 +71,11 @@ type Field struct {
 	// Section is the anchor of the section documenting this field's own
 	// object, empty for a field that is not one.
 	Section string
+	// Recursive names the object the field re-enters, when the shape nests
+	// itself. The page documents such an object once: [Field.Section] then
+	// links back to the section that already describes it, rather than to a
+	// section of its own, of which there would be no last one.
+	Recursive string
 }
 
 // Source is a documented source: the names come from the source itself, so

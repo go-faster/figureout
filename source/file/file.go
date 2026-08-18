@@ -261,6 +261,13 @@ func (p *planner) object(obj *figureout.ObjectModel, segments []string) {
 		if proj, ok := f.Source(Source); ok && proj.Skip {
 			continue
 		}
+		if _, ok := f.Recursive(); ok {
+			// A recursive shape has unboundedly many paths and this source has
+			// exactly one flat name per path, so the cycle is where it stops.
+			// It is the answer a collection of objects already gets, for the
+			// same reason: there is no bounded name for an unbounded path.
+			continue
+		}
 		own := append(slices.Clone(segments), segmentOf(f))
 
 		switch {

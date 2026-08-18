@@ -98,6 +98,10 @@ type FieldModel struct {
 	// reason is why an opaque field is not described. See [FieldModel.Opaque].
 	reason string
 
+	// recursive is the object the field re-enters, when it closes a cycle in
+	// the type graph. See [FieldModel.Recursive].
+	recursive *ObjectModel
+
 	// required records an explicit [FieldBuilder.Required].
 	required bool
 
@@ -137,6 +141,24 @@ func (f *FieldModel) Required() bool {
 // absence resolves to, and it is visible as one.
 func (f *FieldModel) ZeroDefault() bool {
 	return f.zeroDefault && (f.Default == nil || !f.Default.Applied)
+}
+
+// Recursive returns the configuration object the field re-enters, and reports
+// whether it re-enters one at all.
+//
+// A configuration type may refer to itself: a node with a child node, a rule
+// with nested rules. Every value is still a finite tree — recursion reaches a
+// descriptor only through a pointer, a slice or a map, each of which may simply
+// be absent — so the cycle exists in the type graph alone, and the model is a
+// graph rather than an infinitely deep tree. The field closing the cycle points
+// back at an object that already encloses it instead of at a copy of it.
+//
+// A target that names a shape emits the object once and refers to it. A target
+// that spells one flat name per path, such as environment variables, has no
+// bounded name for an unbounded path and stops here, the way it already stops
+// at a collection of objects.
+func (f *FieldModel) Recursive() (*ObjectModel, bool) {
+	return f.recursive, f.recursive != nil
 }
 
 // Moved reports whether the field is a deprecated former spelling of another
@@ -181,15 +203,33 @@ func (m *Model) Fields() []*FieldModel { return m.fields }
 // "sites[0].max_bytes" and "sites[name=docs].max_bytes" both find
 // "sites[].max_bytes".
 func (m *Model) FieldByPath(path string) (*FieldModel, bool) {
-	if f, ok := m.byPath[path]; ok {
-		return f, true
-	}
-	canonical := CanonicalPath(path)
-	if canonical == path {
-		return nil, false
-	}
-	f, ok := m.byPath[canonical]
+	f, _, ok := m.fieldAt(path)
 	return f, ok
+}
+
+// fieldAt is [Model.FieldByPath] with one more answer: whether the path names
+// that field itself, rather than something the field only describes.
+//
+// The two differ under a former path, which is indexed against the models the
+// moved field borrows: "old.list" finds the field describing the list without
+// being the list's own path, and what a source writes there belongs to the old
+// spelling until [Model.applyMoved] redirects it.
+//
+// A path the index does not hold is walked instead. A recursive descriptor has
+// unboundedly many paths, so the index holds the shallowest spelling of each
+// field and everything below one is found by following the shape it describes;
+// a walk that arrives at a field arrives at the field itself.
+func (m *Model) fieldAt(path string) (f *FieldModel, own, ok bool) {
+	if f, ok := m.byPath[path]; ok {
+		return f, f.Path == path, true
+	}
+	if canonical := CanonicalPath(path); canonical != path {
+		if f, ok := m.byPath[canonical]; ok {
+			return f, f.Path == canonical, true
+		}
+	}
+	f, ok = m.Root.walkPath(path)
+	return f, ok, ok
 }
 
 func (m *Model) reindex() {
@@ -212,6 +252,12 @@ func (m *Model) reindex() {
 				// The shadow's structure is its target's, so it is indexed
 				// under the former path rather than walked and re-pathed.
 				m.indexShadow(f)
+				continue
+			}
+			if f.recursive != nil {
+				// The object is one that encloses this field, so it is indexed
+				// where it is declared rather than again under every path that
+				// re-enters it — and there are unboundedly many of those.
 				continue
 			}
 			switch {
@@ -242,6 +288,9 @@ func (m *Model) indexShadow(shadow *FieldModel) {
 		for _, f := range o.Fields {
 			path := prefix + f.Name
 			m.byPath[path] = f
+			if f.recursive != nil {
+				continue
+			}
 			switch {
 			case f.Type.Object != nil:
 				walk(f.Type.Object, path+".")
