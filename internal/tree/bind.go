@@ -95,9 +95,12 @@ func (b Binder) object(
 		case f.Type.Union != nil:
 			b.union(layer, f, child, path, docPath)
 		case f.Type.Object != nil:
-			// Only a pointer carrier can hold "no section": every other object
-			// is materialized whether or not a document declares it.
-			optional := f.Presence == figureout.PresencePointer
+			// Only a carrier can hold "no section": a required object is
+			// materialized whether or not a document declares it, and a group
+			// has no field of its own to be absent from. Which carrier it is
+			// does not matter here — a pointer and an [figureout.OptionalOf]
+			// say the same thing about the section.
+			optional := f.OptionalSection()
 			if child.Kind == Null && optional {
 				// A section a source may leave out may also be erased, which
 				// drops the section rather than emptying it.

@@ -228,7 +228,7 @@ func (m *Model) fold(res *resolution, layer *Layer, rep *Report) {
 
 		// Erasing an optional section erases what is in it. The members of a
 		// section that is gone are not a section that is half there.
-		if a.State == ValueNull && f != nil && f.Presence == PresencePointer && f.Type.Object != nil {
+		if a.State == ValueNull && f != nil && f.OptionalSection() {
 			res.dropSubtree(a.Path)
 		}
 
@@ -296,14 +296,11 @@ func (m *Model) lookup(root reflect.Value, path string) (*FieldModel, reflect.Va
 		}
 		switch {
 		case f.Type.Object != nil:
-			child := v.FieldByIndex(f.GoPath.Index)
-			if f.Presence == PresencePointer {
-				// A section nobody wrote holds no values, so a path into it
-				// reports false rather than reading through a nil pointer.
-				if child.IsNil() {
-					return nil, reflect.Value{}, false
-				}
-				child = child.Elem()
+			// A section nobody wrote holds no values, so a path into it reports
+			// false rather than reading through an unset carrier.
+			child, ok := f.acc.reach(v)
+			if !ok {
+				return nil, reflect.Value{}, false
 			}
 			obj, v = f.Type.Object, child
 		case f.Type.Union != nil:
@@ -354,7 +351,7 @@ func (m *Model) materialize(
 			m.materializeUnion(f, v, path, values, res, rep)
 		case collection:
 			m.materializeCollection(f, v, path, values, res, rep)
-		case f.Presence == PresencePointer && f.Type.Object != nil:
+		case f.OptionalSection():
 			m.materializeOptionalObject(f, v, path, values, res, rep)
 		case f.Type.Object != nil:
 			// A [ScalarOr] field written as a scalar carries a value of its

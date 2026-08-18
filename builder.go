@@ -258,8 +258,9 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 		index:    bd.index,
 		settable: !bd.skipped,
 	}
-	presence, elem := unwrapCarrier(bd.typ)
+	presence, indirect, elem := unwrapCarrier(bd.typ)
 	reg.acc.presence = presence
+	reg.acc.indirect = indirect
 	reg.acc.elem = elem
 
 	if kind == regIgnore {
@@ -274,11 +275,20 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 	}
 
 	// Two carriers stacked are two answers to one question: which of the two
-	// nils means the value is missing has no defensible answer.
-	if presence == PresencePointer {
-		if inner, _ := unwrapCarrier(elem); inner != PresenceRequired {
+	// nils means the value is missing has no defensible answer. A pointer
+	// inside a carrier is not that — "OptionalOf[*C]" spells absence once, in
+	// the carrier — so it is the carrier behind the pointer that is refused,
+	// and equally a carrier behind a carrier's pointer.
+	if inner, _, _ := unwrapCarrier(elem); inner != PresenceRequired {
+		switch presence {
+		case PresencePointer:
 			b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
 				"%s is a %s carrier behind a pointer; absence has to be spelled once",
+				bd.goPath, inner)
+			return reg
+		case PresenceOptional:
+			b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+				"%s carries a %s carrier; absence has to be spelled once",
 				bd.goPath, inner)
 			return reg
 		}

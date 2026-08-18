@@ -346,8 +346,9 @@ figureout.OptionalPtr(s, &c.Retries, "retries").AtMost(10)         // T = int
 The type carries the `Of` suffix so the plain name stays free for the
 function. `Value` and `Explicit` reject a carrier field with a diagnostic
 naming the function to use instead, so the two cannot be mixed up silently.
-Stacking carriers — a `*OptionalOf[T]` — is rejected outright: which of the two
-nils means missing has no defensible answer.
+Stacking carriers — a `*OptionalOf[T]`, an `OptionalOf[OptionalOf[T]]` — is
+rejected outright: which of the two nils means missing has no defensible
+answer.
 
 **What absence means is the registration function, not a modifier.** A plain
 field is one of two things, and the call site says which:
@@ -378,6 +379,41 @@ or mark it Required, so absence is an error
 `Value(...).Required()` is `Explicit` spelled the long way, and `ApplyDefault`
 replaces the fallback with a value of your own.
 
+**A section is optional the same way a scalar is.** `OptionalObject` and
+`OptionalObjectFunc` register a nested object a source may leave out, and the
+carrier is what distinguishes what a zero struct cannot: "there is no cache" is
+not "there is a cache and every one of its fields defaulted".
+
+```go
+type Config struct {
+	Cache figureout.OptionalOf[CacheConfig]
+}
+
+figureout.OptionalObjectFunc(s, &c.Cache, "cache", func(c *CacheConfig, s *figureout.Schema[CacheConfig]) {
+	figureout.Explicit(s, &c.Dir, "dir")
+	figureout.Value(s, &c.Bytes, "bytes").ApplyDefault(1024)
+})
+```
+
+`cache: {}` and no `cache` key are different statements, and both resolve to
+what they say: the first is a section whose every member defaulted, the second
+is no section. A nesting source marks the section itself; a flat source such as
+environment variables has no name for it, so there a section is present whenever
+it provided a member — the same statement in the only way that source can make
+it.
+
+Absence materializes nothing inside, which is what makes `Explicit` *within* an
+optional section mean something: `dir` is demanded where the section is present
+and nowhere else. An explicit null erases the section along with whatever
+earlier layers put in it.
+
+**Presence and indirection are separate questions.** `OptionalOf[*C]` is an
+optional section held behind a pointer. Only the carrier speaks for presence, so
+the pointer is an ordinary required one — resolution allocates it whenever the
+section is there, and it is never nil in a resolved configuration. Reach for it
+where the section is large enough that copying it matters, or where consumers
+already pass a `*C` around.
+
 **A pointer is a carrier too.** `OptionalOf[T]` is the carrier to write in a
 configuration being written now: it carries the same two states without the
 aliasing. A configuration being *adopted* usually already spells presence as
@@ -398,6 +434,18 @@ figureout.OptionalObjectFunc(s, &c.S3, "s3", describeS3)
 Constraints are still typed as the element, absence still leaves the carrier
 empty, and the pointer resolution writes is freshly allocated — it aliases
 nothing a source is still holding.
+
+The three optional carriers are one presence spelled three ways, and
+`OptionalObject`/`OptionalObjectFunc` take any of them:
+
+| Field | Absence is | Reach for it when |
+|---|---|---|
+| `OptionalOf[C]` | the carrier is unset | writing a configuration now |
+| `OptionalOf[*C]` | the carrier is unset | the same, and the section is passed around by pointer |
+| `*C` | the pointer is nil | adopting a struct that already has this shape |
+
+A `Group` is never one: it nests the document without nesting the Go
+struct, so it has no field to be absent from.
 
 An optional *section* is the part a zero struct cannot express:
 

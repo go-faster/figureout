@@ -113,15 +113,21 @@ func OptionalPtr[R, T any](s *Schema[R], field **T, name string, opts ...FieldOp
 // Object registers a nested configuration object described by its own
 // descriptor.
 func Object[R, C any](s *Schema[R], field *C, name string, d *Descriptor[C], opts ...FieldOption) *ObjectField {
-	return object(s.b, unsafe.Pointer(field), reflect.TypeFor[C](), name, PresenceRequired, d, opts)
+	return object(s.b, unsafe.Pointer(field), reflect.TypeFor[C](), name, requiredSection, d, opts)
 }
 
 // OptionalObject registers a nested object a source may leave out entirely.
 //
-// A "*C" section distinguishes what a zero struct cannot: "there is no cluster"
-// is not "there is a cluster and every one of its fields defaulted". The
-// pointer is nil unless some source contained the section, and a section that
-// was contained is materialized even when every member of it defaulted.
+// An optional section distinguishes what a zero struct cannot: "there is no
+// cluster" is not "there is a cluster and every one of its fields defaulted".
+// The carrier is unset unless some source contained the section, and a section
+// that was contained is materialized even when every member of it defaulted.
+//
+// Any of the three optional carriers holds one:
+//
+//	S3 figureout.OptionalOf[S3Config]    // the carrier a new configuration wants
+//	S3 figureout.OptionalOf[*S3Config]   // the same, held behind a pointer
+//	S3 *S3Config                         // the shape an adopted struct already has
 //
 //	figureout.OptionalObject(s, &c.Storage.S3, "s3", s3Descriptor)
 //
@@ -129,14 +135,14 @@ func Object[R, C any](s *Schema[R], field *C, name string, d *Descriptor[C], opt
 // present, which is what makes "required inside an optional section" mean
 // something. An explicit null erases the section, along with whatever earlier
 // layers put in it.
-func OptionalObject[R, C any](
+func OptionalObject[R, F, C any](
 	s *Schema[R],
-	field **C,
+	field *F,
 	name string,
 	d *Descriptor[C],
 	opts ...FieldOption,
 ) *ObjectField {
-	return object(s.b, unsafe.Pointer(field), reflect.TypeFor[*C](), name, PresencePointer, d, opts)
+	return object(s.b, unsafe.Pointer(field), reflect.TypeFor[F](), name, optionalSection, d, opts)
 }
 
 func object[C any](
@@ -144,7 +150,7 @@ func object[C any](
 	ptr unsafe.Pointer,
 	carrier reflect.Type,
 	name string,
-	want Presence,
+	want sectionKind,
 	d *Descriptor[C],
 	opts []FieldOption,
 ) *ObjectField {
@@ -163,28 +169,43 @@ func object[C any](
 	return &ObjectField{&FieldBuilder{b: b, reg: reg}}
 }
 
+// sectionKind is what a nested-object registrar declares about its field: that
+// the section is always there, or that a source may leave it out. It is not a
+// [Presence], because two presences spell the optional one — the carrier and
+// the bare pointer — and the registrar has no reason to care which.
+type sectionKind uint8
+
+const (
+	requiredSection sectionKind = iota
+	optionalSection
+)
+
+func (k sectionKind) String() string {
+	if k == optionalSection {
+		return "optional"
+	}
+	return "required"
+}
+
 // objectPresence checks that the Go field carries the presence the registrar
 // declares, naming the other registrar when it does not.
-func (b *builder) objectPresence(reg *registration, want Presence) bool {
-	if reg.acc.presence == want {
+func (b *builder) objectPresence(reg *registration, want sectionKind) bool {
+	optional := reg.acc.presence == PresenceOptional || reg.acc.presence == PresencePointer
+	if optional == (want == optionalSection) {
 		return true
 	}
-	switch reg.acc.presence {
-	case PresenceRequired, PresencePointer:
-		b.diags.errorf(CodeUnsupportedType, reg.goName, reg.name,
-			"%s carries %s presence; register it with %s",
-			reg.goName, reg.acc.presence, objectRegistrar(reg.acc.presence))
-	default:
-		b.diags.errorf(CodeUnsupportedType, reg.goName, reg.name,
-			"nested objects do not support %s presence; use a pointer", reg.acc.presence)
-	}
+
+	b.diags.errorf(CodeUnsupportedType, reg.goName, reg.name,
+		"%s carries %s presence; register it with %s",
+		reg.goName, reg.acc.presence, objectRegistrar(optional))
+
 	return false
 }
 
 // objectRegistrar names the function registering a nested object of a given
 // presence, in both its descriptor and its inline spelling.
-func objectRegistrar(p Presence) string {
-	if p == PresencePointer {
+func objectRegistrar(optional bool) string {
+	if optional {
 		return "OptionalObject or OptionalObjectFunc"
 	}
 	return "Object or ObjectFunc"
@@ -209,7 +230,7 @@ func ObjectFunc[R, C any](
 	describe func(*C, *Schema[C]),
 	opts ...FieldOption,
 ) *ObjectField {
-	return objectFunc(s.b, unsafe.Pointer(field), reflect.TypeFor[C](), name, PresenceRequired, describe, opts)
+	return objectFunc(s.b, unsafe.Pointer(field), reflect.TypeFor[C](), name, requiredSection, describe, opts)
 }
 
 // OptionalObjectFunc registers a nested object a source may leave out,
@@ -217,14 +238,14 @@ func ObjectFunc[R, C any](
 //
 // It is [OptionalObject] without a descriptor variable, exactly as [ObjectFunc]
 // is [Object] without one.
-func OptionalObjectFunc[R, C any](
+func OptionalObjectFunc[R, F, C any](
 	s *Schema[R],
-	field **C,
+	field *F,
 	name string,
 	describe func(*C, *Schema[C]),
 	opts ...FieldOption,
 ) *ObjectField {
-	return objectFunc(s.b, unsafe.Pointer(field), reflect.TypeFor[*C](), name, PresencePointer, describe, opts)
+	return objectFunc(s.b, unsafe.Pointer(field), reflect.TypeFor[F](), name, optionalSection, describe, opts)
 }
 
 func objectFunc[C any](
@@ -232,7 +253,7 @@ func objectFunc[C any](
 	ptr unsafe.Pointer,
 	carrier reflect.Type,
 	name string,
-	want Presence,
+	want sectionKind,
 	describe func(*C, *Schema[C]),
 	opts []FieldOption,
 ) *ObjectField {
@@ -255,20 +276,12 @@ func objectFunc[C any](
 // describeNested compiles a child object with its own builder, rooted at the
 // nested value inside this builder's synthetic object.
 func describeNested[C any](b *builder, reg *registration, describe func(*C, *Schema[C])) *ObjectModel {
-	rv := b.root.FieldByIndex(reg.bound.index)
-	pointer := reg.acc.presence == PresencePointer
-	if pointer {
-		// The synthetic root's pointer is nil, and the nested builder binds by
-		// the address of a field inside the value it points at, so there has to
-		// be one to take an address in.
-		rv.Set(reflect.New(reg.acc.elem))
-		rv = rv.Elem()
-	}
+	rv := reg.acc.bindRoot(b.root)
 	nb := newBuilder(rv, reg.goName, b.opts)
 	describe(rv.Addr().Interface().(*C), &Schema[C]{b: nb})
 	obj := nb.compile()
 	b.diags = append(b.diags, nb.diags...)
-	b.invariants = append(b.invariants, lift(nb.invariants, reg.name, reg.bound.index, pointer)...)
+	b.invariants = append(b.invariants, lift(nb.invariants, reg.name, reg.acc)...)
 	return obj
 }
 
@@ -333,7 +346,7 @@ func IgnorePath[R any](s *Schema[R], path string, opts ...IgnoreOption) {
 		goName: bd.goPath,
 		acc:    accessor{index: bd.index, settable: !bd.skipped},
 	}
-	reg.acc.presence, reg.acc.elem = unwrapCarrier(bd.typ)
+	reg.acc.presence, reg.acc.indirect, reg.acc.elem = unwrapCarrier(bd.typ)
 	for _, o := range opts {
 		if err := o.applyIgnore(reg); err != nil {
 			b.diags.errorf(CodeMissingDefinition, reg.goName, "", "ignore option: %s", err)
