@@ -83,6 +83,26 @@ func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureou
 	}
 }
 
+// DecodeAny implements [tree.ScalarDecoder].
+//
+// A number keeps its integer spelling where it has one: encoding/json would
+// hand back a float64, and a passthrough carrying an identifier or a byte count
+// must not lose digits on the way through.
+func (decoder) DecodeAny(n *tree.Node) (any, error) {
+	num, ok := n.Value.(json.Number)
+	if !ok {
+		return n.Value, nil
+	}
+	if i, err := num.Int64(); err == nil {
+		return i, nil
+	}
+	f, err := num.Float64()
+	if err != nil {
+		return nil, errors.Errorf("invalid number %q", num)
+	}
+	return f, nil
+}
+
 // scaled reads a JSON number as a count of the field's declared unit.
 func (decoder) scaled(t figureout.Type, num json.Number) (any, error) {
 	var (

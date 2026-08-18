@@ -80,6 +80,7 @@ const (
 	regUnion
 	regIgnore
 	regGroup
+	regOpaque
 )
 
 // registration is one recorded declaration, before compilation.
@@ -284,6 +285,22 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 		}
 	}
 
+	if kind == regOpaque {
+		// Deriving is exactly what an opaque field opts out of: its shape
+		// belongs to another program, and describing it would be a guess.
+		reg.typ = Type{Kind: TypeOpaque, Go: elem}
+		reg.zeroDefault = true
+		if presence != PresenceRequired {
+			b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+				"a passthrough does not support %s presence: an absent subtree and an "+
+					"empty one are the same statement", presence)
+			return reg
+		}
+		reg.valid = true
+		b.add(reg)
+		return reg
+	}
+
 	typ, ok := b.deriveType(elem)
 	if !ok {
 		b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
@@ -400,6 +417,7 @@ func (b *builder) compileContainer(c *container, handled map[string]*registratio
 			MovedFrom:   reg.movedFrom,
 			required:    reg.required,
 			zeroDefault: reg.zeroDefault,
+			reason:      reg.reason,
 			widen:       reg.widen,
 			acc:         reg.acc,
 		}

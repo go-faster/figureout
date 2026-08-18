@@ -141,6 +141,12 @@ func (g *generator) field(f *figureout.FieldModel) *Field {
 		}
 	}
 	row.Constraints = g.constraints(f)
+	// A passthrough is documented as one rather than omitted: a reader who
+	// finds the key in a file has to learn from somewhere that nothing here
+	// checks it.
+	if reason, ok := f.Opaque(); ok && row.Doc == "" {
+		row.Doc = reason
+	}
 	return row
 }
 
@@ -271,6 +277,8 @@ func typeName(t figureout.Type) string {
 			return "map of " + elemName(*t.Key) + " to " + elemName(*t.Elem)
 		}
 		return "map"
+	case figureout.TypeOpaque:
+		return "passthrough"
 	case figureout.TypeObject:
 		if t.Scalar != nil {
 			return typeName(*t.Scalar) + " or object"

@@ -43,6 +43,9 @@ type FieldOptionContext interface {
 	SetUnit(time.Duration) error
 	// AddMovedFrom records a former path of the field.
 	AddMovedFrom(string) error
+	// SetReason documents why a field is not described. It applies to an
+	// opaque passthrough, which is the only field that is not.
+	SetReason(string) error
 
 	// SetSourceNames sets the primary name and aliases for a source.
 	SetSourceNames(SourceID, ...string) error
@@ -108,6 +111,18 @@ func (c *fieldContext) AddMovedFrom(path string) error {
 		return errors.New("empty former path")
 	}
 	c.reg.movedFrom = append(c.reg.movedFrom, path)
+	return nil
+}
+
+func (c *fieldContext) SetReason(text string) error {
+	if text == "" {
+		return errors.New("empty reason")
+	}
+	if c.reg.typ.Kind != TypeOpaque {
+		return errors.Errorf("a reason says why a field is not described, and %q is a %s; "+
+			"use Doc to document one that is", c.reg.name, c.reg.typ.Kind)
+	}
+	c.reg.reason = text
 	return nil
 }
 

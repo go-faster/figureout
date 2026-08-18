@@ -281,12 +281,29 @@ type ignoreOptionFunc func(*registration) error
 
 func (f ignoreOptionFunc) applyIgnore(r *registration) error { return f(r) }
 
-// Reason documents why a field is ignored.
-func Reason(text string) IgnoreOption {
-	return ignoreOptionFunc(func(r *registration) error {
-		r.reason = text
-		return nil
-	})
+// Reason documents why a field is not described.
+//
+// It applies to [Ignore], where it says why a Go field is not configuration,
+// and to [Opaque], where it is required: a passthrough takes its whole subtree
+// out of unknown-field checking, and a hole in strictness has to read as one at
+// the declaration site.
+func Reason(text string) ReasonOption {
+	return ReasonOption{text: text}
+}
+
+// ReasonOption is [Reason]. It is both an [IgnoreOption] and a [FieldOption]
+// because both kinds of declaration are a decision not to describe something.
+type ReasonOption struct{ text string }
+
+//nolint:unparam // applyIgnore is an interface method; every option returns an error.
+func (o ReasonOption) applyIgnore(r *registration) error {
+	r.reason = o.text
+	return nil
+}
+
+// ApplyFieldOption implements [FieldOption].
+func (o ReasonOption) ApplyFieldOption(c FieldOptionContext) error {
+	return c.SetReason(o.text)
 }
 
 // Ignore marks a field as deliberately not part of the configuration.

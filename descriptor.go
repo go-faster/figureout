@@ -95,6 +95,9 @@ type FieldModel struct {
 	// for a list registered with [ListField.MergeByKey].
 	mergeKey *FieldModel
 
+	// reason is why an opaque field is not described. See [FieldModel.Opaque].
+	reason string
+
 	// required records an explicit [FieldBuilder.Required].
 	required bool
 
@@ -344,6 +347,19 @@ func setPointer(fv reflect.Value, elem reflect.Type, v any) error {
 		return errors.Errorf("cannot assign %s to %s", rv.Type(), fv.Type())
 	}
 	fv.Set(out)
+	return nil
+}
+
+// setZero writes the zero value of the field.
+//
+// It is not [accessor.set] with a zero: the zero value of an interface is an
+// untyped nil, which no assignment can carry.
+func (a accessor) setZero(obj reflect.Value) error {
+	fv, err := a.field(obj)
+	if err != nil {
+		return err
+	}
+	fv.SetZero()
 	return nil
 }
 

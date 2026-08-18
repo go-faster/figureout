@@ -28,6 +28,7 @@ const (
 	keySchema     = "$schema"
 	typeInteger   = "integer"
 	typeString    = "string"
+	typeObject    = "object"
 )
 
 // Diagnostic codes reported by generation.
@@ -171,7 +172,7 @@ func (g *generator) object(o *figureout.ObjectModel) map[string]any {
 	}
 
 	doc := map[string]any{
-		keyType:                "object",
+		keyType:                typeObject,
 		keyProperties:          props,
 		"additionalProperties": false,
 	}
@@ -219,6 +220,8 @@ func erasable(f *figureout.FieldModel) bool {
 func (g *generator) field(f *figureout.FieldModel) map[string]any {
 	var doc map[string]any
 	switch {
+	case f.Type.Kind == figureout.TypeOpaque:
+		doc = opaque(f)
 	case f.Type.Union != nil:
 		doc = g.union(f)
 	case f.Type.Object != nil:
@@ -251,6 +254,28 @@ func (g *generator) field(f *figureout.FieldModel) map[string]any {
 		doc["default"] = wireValue(f.Type, f.Default.Value)
 	}
 	g.applyPatches(f, doc)
+	return doc
+}
+
+// opaque describes a passthrough: the widest shape its Go type can hold, and
+// nothing more.
+//
+// A closed object here would be a claim about another program's configuration,
+// which is the claim a passthrough exists not to make. The reason it carries is
+// the only thing worth emitting, and it is emitted as a description so that a
+// reader of the schema learns why the block is unchecked.
+func opaque(f *figureout.FieldModel) map[string]any {
+	doc := map[string]any{}
+	switch f.Type.Go.Kind() {
+	case reflect.Map, reflect.Struct:
+		doc[keyType] = typeObject
+	case reflect.Slice, reflect.Array:
+		doc[keyType] = "array"
+	default:
+	}
+	if reason, ok := f.Opaque(); ok && reason != "" {
+		doc["description"] = reason
+	}
 	return doc
 }
 
@@ -375,7 +400,7 @@ func jsonType(k figureout.TypeKind) string {
 	case figureout.TypeList:
 		return "array"
 	default:
-		return "object"
+		return typeObject
 	}
 }
 
