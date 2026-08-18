@@ -335,12 +335,10 @@ the carrier:
 type Config struct {
 	Port    int
 	Timeout figureout.OptionalOf[time.Duration]   // missing | present
-	Retries *int                                  // missing | present
 }
 
 figureout.Explicit(s, &c.Port, "port").InRange(1, 65535)           // T = int
 figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)  // T = time.Duration
-figureout.OptionalPtr(s, &c.Retries, "retries").AtMost(10)         // T = int
 ```
 
 The type carries the `Of` suffix so the plain name stays free for the
@@ -407,42 +405,49 @@ optional section mean something: `dir` is demanded where the section is present
 and nowhere else. An explicit null erases the section along with whatever
 earlier layers put in it.
 
-**Presence and indirection are separate questions.** `OptionalOf[*C]` is an
-optional section held behind a pointer. Only the carrier speaks for presence, so
-the pointer is an ordinary required one — resolution allocates it whenever the
-section is there, and it is never nil in a resolved configuration. Reach for it
-where the section is large enough that copying it matters, or where consumers
-already pass a `*C` around.
-
-**A pointer is a carrier too.** `OptionalOf[T]` is the carrier to write in a
-configuration being written now: it carries the same two states without the
-aliasing. A configuration being *adopted* usually already spells presence as
-`*T`, and that struct is also marshaled, defaulted and compared against nil by
-consumers, so changing its shape for the configuration package's sake ripples
-out of the package entirely. Registering it says so:
+**A pointer is indirection, and nothing else.** `OptionalOf` is the only thing
+that says a value may be missing. A pointer says only that the value is held
+behind one, so a `*C` field is required like any other: resolution allocates it,
+and it is never nil in a resolved configuration.
 
 ```go
 type Config struct {
-	EnableNegativeOffset *bool          // nil, false and true are three answers
-	S3                   *S3Config      // nil is "no section", not "a section of zeroes"
+	S3      *S3Config                            // always there, held by pointer
+	Cache   figureout.OptionalOf[*CacheConfig]   // may be missing, held by pointer
 }
 
-figureout.OptionalPtr(s, &c.EnableNegativeOffset, "enable_negative_offset")
-figureout.OptionalObjectFunc(s, &c.S3, "s3", describeS3)
+figureout.ObjectFunc(s, &c.S3, "s3", describeS3)
+figureout.OptionalObjectFunc(s, &c.Cache, "cache", describeCache)
 ```
 
-Constraints are still typed as the element, absence still leaves the carrier
-empty, and the pointer resolution writes is freshly allocated — it aliases
-nothing a source is still holding.
+That is the whole rule, and it is why there is no `OptionalPtr`: a nil pointer
+never means "no value". A configuration being *adopted* that spells presence as
+`*T` converts the field to a carrier rather than teaching the pointer a second
+meaning — `OptionalOf[T]` where the pointer was only ever standing in for
+absence, `OptionalOf[*T]` where consumers also want the pointer. The carrier
+marshals as the value it holds in both JSON and YAML (missing is `null`), so
+converting does not change how the struct serializes.
 
-The three optional carriers are one presence spelled three ways, and
-`OptionalObject`/`OptionalObjectFunc` take any of them:
+A pointer to a *scalar* is refused outright. It is not presence, and a scalar
+has no identity or size a pointer would preserve, so it buys nothing and costs
+pointer-typed constraints:
 
-| Field | Absence is | Reach for it when |
+```text
+field.unsupported_type [retries]: Config.Retries is a pointer to a scalar;
+write the value itself, or OptionalOf[int] if it may be missing
+```
+
+Two carriers are two answers to one question, so a second one below the first is
+refused wherever it sits — `*OptionalOf[T]`, `OptionalOf[OptionalOf[T]]` — and so
+is a `**T`, whose second nil answers nothing either.
+
+The two optional carriers are one presence spelled two ways, and
+`OptionalObject`/`OptionalObjectFunc` take either:
+
+| Field | Section is | Held |
 |---|---|---|
-| `OptionalOf[C]` | the carrier is unset | writing a configuration now |
-| `OptionalOf[*C]` | the carrier is unset | the same, and the section is passed around by pointer |
-| `*C` | the pointer is nil | adopting a struct that already has this shape |
+| `OptionalOf[C]` | absent unless a source contained it | inline |
+| `OptionalOf[*C]` | absent unless a source contained it | behind a pointer resolution allocates |
 
 A `Group` is never one: it nests the document without nesting the Go
 struct, so it has no field to be absent from.
@@ -450,10 +455,10 @@ struct, so it has no field to be absent from.
 An optional *section* is the part a zero struct cannot express:
 
 ```yaml
-# no s3 key      -> nil
-s3: {}           # -> &S3Config{}, a section that defaulted throughout
-s3: {bucket: x}  # -> &S3Config{Bucket: "x"}
-s3: null         # -> nil, and whatever an earlier layer put in it is gone
+# no cache key      -> unset
+cache: {}           # -> set, a section that defaulted throughout
+cache: {dir: /x}    # -> set, with dir
+cache: null         # -> unset, and whatever an earlier layer put in it is gone
 ```
 
 A member registered with `Explicit` is demanded where the section is present

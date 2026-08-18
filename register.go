@@ -63,21 +63,21 @@ func Explicit[R, T any](s *Schema[R], field *T, name string, opts ...FieldOption
 func registerPlain[R, T any](s *Schema[R], field *T, name string, opts []FieldOption) *ValueField[T] {
 	b := s.b
 	f := registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[T](), name, opts)
-	if f.ok() && f.reg.acc.presence != PresenceRequired {
+	switch {
+	case !f.ok():
+	case f.reg.acc.presence != PresenceRequired:
 		b.diags.errorf(CodeUnsupportedType, f.reg.goName, name,
-			"%s carries %s presence; register it with %s",
-			f.reg.goName, f.reg.acc.presence, optionalRegistrar(f.reg.acc.presence))
+			"%s carries %s presence; register it with Optional", f.reg.goName, f.reg.acc.presence)
+	case f.reg.acc.indirect:
+		// A pointer to a scalar buys nothing a configuration wants. It is not
+		// presence — that is the carrier's job — and there is no identity or
+		// size to preserve, so all it does is make the constraints and the
+		// default of this builder pointer-typed.
+		b.diags.errorf(CodeUnsupportedType, f.reg.goName, name,
+			"%s is a pointer to a scalar; write the value itself, "+
+				"or OptionalOf[%s] if it may be missing", f.reg.goName, f.reg.acc.elem)
 	}
 	return f
-}
-
-// optionalRegistrar names the function that registers a given carrier, so a
-// diagnostic says what to write rather than only what is wrong.
-func optionalRegistrar(p Presence) string {
-	if p == PresencePointer {
-		return "OptionalPtr"
-	}
-	return "Optional"
 }
 
 // Optional registers a field that a source may leave out.
@@ -88,32 +88,10 @@ func Optional[R, T any](s *Schema[R], field *OptionalOf[T], name string, opts ..
 	return registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[OptionalOf[T]](), name, opts)
 }
 
-// OptionalPtr registers an optional field whose carrier is a pointer.
-//
-// It is [Optional] for a "*T" already in the Go type, where nil, the zero value
-// and any other value are three distinct states an operator can produce:
-//
-//	// nil is "the operator said nothing", which the program defaults to true
-//	EnableNegativeOffset *bool `yaml:"enable_negative_offset"`
-//
-//	figureout.OptionalPtr(s, &c.EnableNegativeOffset, "enable_negative_offset")
-//
-// The element type is inferred from the pointer, so the builder and its
-// constraints are typed as T. Absence leaves the pointer nil; the pointer a
-// value is written through is allocated by resolution and aliases nothing.
-//
-// Prefer [OptionalOf] in a configuration being written now: it carries the same
-// two states without the aliasing. Reach for this one where the pointer is a
-// fact about a struct that is also marshaled, defaulted or handed to library
-// code, and cannot change shape for the configuration package's sake.
-func OptionalPtr[R, T any](s *Schema[R], field **T, name string, opts ...FieldOption) *ValueField[T] {
-	return registerValue[R, T](s, unsafe.Pointer(field), reflect.TypeFor[*T](), name, opts)
-}
-
 // Object registers a nested configuration object described by its own
 // descriptor.
-func Object[R, C any](s *Schema[R], field *C, name string, d *Descriptor[C], opts ...FieldOption) *ObjectField {
-	return object(s.b, unsafe.Pointer(field), reflect.TypeFor[C](), name, requiredSection, d, opts)
+func Object[R, F, C any](s *Schema[R], field *F, name string, d *Descriptor[C], opts ...FieldOption) *ObjectField {
+	return object(s.b, unsafe.Pointer(field), reflect.TypeFor[F](), name, requiredSection, d, opts)
 }
 
 // OptionalObject registers a nested object a source may leave out entirely.
@@ -190,7 +168,7 @@ func (k sectionKind) String() string {
 // objectPresence checks that the Go field carries the presence the registrar
 // declares, naming the other registrar when it does not.
 func (b *builder) objectPresence(reg *registration, want sectionKind) bool {
-	optional := reg.acc.presence == PresenceOptional || reg.acc.presence == PresencePointer
+	optional := reg.acc.presence == PresenceOptional
 	if optional == (want == optionalSection) {
 		return true
 	}
@@ -223,14 +201,14 @@ func objectRegistrar(optional bool) string {
 //
 // Prefer [Object] for a descriptor shared by several parents or exported for
 // its own sake, and ObjectFunc for a section that has exactly one parent.
-func ObjectFunc[R, C any](
+func ObjectFunc[R, F, C any](
 	s *Schema[R],
-	field *C,
+	field *F,
 	name string,
 	describe func(*C, *Schema[C]),
 	opts ...FieldOption,
 ) *ObjectField {
-	return objectFunc(s.b, unsafe.Pointer(field), reflect.TypeFor[C](), name, requiredSection, describe, opts)
+	return objectFunc(s.b, unsafe.Pointer(field), reflect.TypeFor[F](), name, requiredSection, describe, opts)
 }
 
 // OptionalObjectFunc registers a nested object a source may leave out,
@@ -276,7 +254,7 @@ func objectFunc[C any](
 // describeNested compiles a child object with its own builder, rooted at the
 // nested value inside this builder's synthetic object.
 func describeNested[C any](b *builder, reg *registration, describe func(*C, *Schema[C])) *ObjectModel {
-	rv := reg.acc.bindRoot(b.root)
+	rv := reg.acc.descend(b.root)
 	nb := newBuilder(rv, reg.goName, b.opts)
 	describe(rv.Addr().Interface().(*C), &Schema[C]{b: nb})
 	obj := nb.compile()

@@ -308,21 +308,20 @@ func (a accessor) set(obj reflect.Value, v any) error {
 	if err != nil {
 		return err
 	}
-	switch a.presence {
-	case PresenceOptional:
-		if a.indirect {
-			// The carrier holds a *elem, so the value is boxed before it goes
-			// in — into a fresh pointer, so the result aliases nothing a source
-			// still holds, exactly as [setPointer] does.
-			boxed, err := boxPointer(a.elem, v)
-			if err != nil {
-				return err
-			}
-			v = boxed
+
+	if a.indirect {
+		// The value is held behind a pointer, so it is boxed before it goes in
+		// — into a fresh one, so a resolved configuration aliases nothing a
+		// source is still holding.
+		boxed, err := boxPointer(a.elem, v)
+		if err != nil {
+			return err
 		}
+		v = boxed
+	}
+
+	if a.presence == PresenceOptional {
 		return fv.Addr().Interface().(carrierRef).carrierSet(v)
-	case PresencePointer:
-		return setPointer(fv, a.elem, v)
 	}
 
 	rv := reflect.ValueOf(v)
@@ -358,28 +357,6 @@ func boxPointer(elem reflect.Type, v any) (any, error) {
 	return out.Interface(), nil
 }
 
-// setPointer writes a value through a pointer carrier, allocating one.
-//
-// The pointer is fresh rather than the caller's: a resolved configuration must
-// not alias a value some source still holds.
-func setPointer(fv reflect.Value, elem reflect.Type, v any) error {
-	rv := reflect.ValueOf(v)
-	if !rv.IsValid() {
-		return errors.Errorf("cannot assign nil to %s", fv.Type())
-	}
-	out := reflect.New(elem)
-	switch {
-	case rv.Type().AssignableTo(elem):
-		out.Elem().Set(rv)
-	case rv.Type().ConvertibleTo(elem):
-		out.Elem().Set(rv.Convert(elem))
-	default:
-		return errors.Errorf("cannot assign %s to %s", rv.Type(), fv.Type())
-	}
-	fv.Set(out)
-	return nil
-}
-
 // carried is the Go type the carrier holds, which is a pointer to elem when the
 // carrier is indirect.
 // OptionalSection reports a nested object a source may leave out, whichever of
@@ -403,72 +380,68 @@ func (a accessor) carried() reflect.Type {
 // reach returns the addressable nested object inside obj, and whether there is
 // one at all — an optional section nobody wrote has no members to reach.
 func (a accessor) reach(obj reflect.Value) (reflect.Value, bool) {
-	fv := obj.FieldByIndex(a.index)
-	switch a.presence {
-	case PresencePointer:
-		if fv.IsNil() {
-			return reflect.Value{}, false
-		}
-		return fv.Elem(), true
-	case PresenceOptional:
-		ref := fv.Addr().Interface().(carrierRef)
+	held := obj.FieldByIndex(a.index)
+	if a.presence == PresenceOptional {
+		ref := held.Addr().Interface().(carrierRef)
 		if _, ok := ref.carrierGet(); !ok {
 			return reflect.Value{}, false
 		}
-		held := reflect.NewAt(a.carried(), ref.carrierAddr()).Elem()
-		if !a.indirect {
-			return held, true
-		}
-		if held.IsNil() {
-			return reflect.Value{}, false
-		}
-		return held.Elem(), true
+		held = reflect.NewAt(a.carried(), ref.carrierAddr()).Elem()
 	}
-	return fv, true
+
+	if !a.indirect {
+		return held, true
+	}
+
+	// A pointer resolution wrote is never nil; one a hand-built value carries
+	// may be, and reaching through it would panic.
+	if held.IsNil() {
+		return reflect.Value{}, false
+	}
+	return held.Elem(), true
 }
 
-// bindRoot returns the nested object to root a child builder at, allocating
-// whatever indirection stands in the way. It runs once, at build time, against
-// the synthetic root: members bind by their address inside the object, so there
-// has to be an object to take an address in.
-func (a accessor) bindRoot(obj reflect.Value) reflect.Value {
-	fv := obj.FieldByIndex(a.index)
-	switch a.presence {
-	case PresencePointer:
-		fv.Set(reflect.New(a.elem))
-		return fv.Elem()
-	case PresenceOptional:
-		held := reflect.NewAt(a.carried(), fv.Addr().Interface().(carrierRef).carrierAddr()).Elem()
-		if !a.indirect {
-			return held
-		}
-		held.Set(reflect.New(a.elem))
-		return held.Elem()
+// descend returns the nested object inside obj, allocating whatever indirection
+// stands in the way. Both walks into a section that is there need it: a builder
+// binds members by their address inside the object, and resolution writes them
+// there, and neither has anything to address until the pointer holding it
+// exists.
+//
+// It is [accessor.reach] for a section that is going to be there rather than
+// one that may already be, which is why it allocates instead of reporting.
+func (a accessor) descend(obj reflect.Value) reflect.Value {
+	held := obj.FieldByIndex(a.index)
+	if a.presence == PresenceOptional {
+		held = reflect.NewAt(a.carried(), held.Addr().Interface().(carrierRef).carrierAddr()).Elem()
 	}
-	return fv
+
+	if !a.indirect {
+		return held
+	}
+
+	held.Set(reflect.New(a.elem))
+	return held.Elem()
 }
 
 func (a accessor) get(obj reflect.Value) (any, bool) {
-	fv := obj.FieldByIndex(a.index)
-	switch a.presence {
-	case PresenceOptional:
-		v, ok := fv.Addr().Interface().(carrierRef).carrierGet()
-		if !ok || !a.indirect {
-			return v, ok
-		}
-		// A present carrier holding a nil pointer is not a state resolution can
-		// produce — it allocates — so it only arises from a hand-built value,
-		// and reading through it would panic.
-		pv := reflect.ValueOf(v)
-		if !pv.IsValid() || pv.IsNil() {
+	held := obj.FieldByIndex(a.index)
+	if a.presence == PresenceOptional {
+		v, ok := held.Addr().Interface().(carrierRef).carrierGet()
+		if !ok {
 			return nil, false
 		}
-		return pv.Elem().Interface(), true
-	case PresencePointer:
-		if fv.IsNil() {
-			return nil, false
+		if !a.indirect {
+			return v, true
 		}
-		return fv.Elem().Interface(), true
+		held = reflect.ValueOf(v)
 	}
-	return fv.Interface(), true
+
+	if !a.indirect {
+		return held.Interface(), true
+	}
+
+	if !held.IsValid() || held.IsNil() {
+		return nil, false
+	}
+	return held.Elem().Interface(), true
 }

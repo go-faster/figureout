@@ -275,23 +275,22 @@ func (b *builder) register(ptr unsafe.Pointer, carrier reflect.Type, name string
 	}
 
 	// Two carriers stacked are two answers to one question: which of the two
-	// nils means the value is missing has no defensible answer. A pointer
-	// inside a carrier is not that — "OptionalOf[*C]" spells absence once, in
-	// the carrier — so it is the carrier behind the pointer that is refused,
-	// and equally a carrier behind a carrier's pointer.
+	// says the value is missing has no defensible answer. Only [OptionalOf]
+	// answers it, so a second one anywhere below the first is refused, whether
+	// it sits behind the pointer of a "*OptionalOf[T]" or inside another
+	// carrier.
 	if inner, _, _ := unwrapCarrier(elem); inner != PresenceRequired {
-		switch presence {
-		case PresencePointer:
-			b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
-				"%s is a %s carrier behind a pointer; absence has to be spelled once",
-				bd.goPath, inner)
-			return reg
-		case PresenceOptional:
-			b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
-				"%s carries a %s carrier; absence has to be spelled once",
-				bd.goPath, inner)
-			return reg
-		}
+		b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+			"%s holds a %s carrier; absence has to be spelled once", bd.goPath, inner)
+		return reg
+	}
+
+	// A pointer is indirection, and one level of it is all a configuration
+	// means by it: a "**T" has a second nil that answers nothing.
+	if indirect && elem.Kind() == reflect.Pointer {
+		b.diags.errorf(CodeUnsupportedType, bd.goPath, name,
+			"%s is a pointer to a pointer; a value is held behind at most one", bd.goPath)
+		return reg
 	}
 
 	typ, ok := b.deriveType(elem)

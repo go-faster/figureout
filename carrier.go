@@ -21,33 +21,14 @@ const (
 	// a merge directive that erases earlier layers, not a value a field holds,
 	// so nullability never reaches the Go type.
 	PresenceOptional
-	// PresencePointer is a pointer carrier: nil is missing, non-nil present.
-	//
-	// It is [PresenceOptional] written the way encoding/json and go-faster/yaml
-	// already understand. A configuration adopted onto figureout is usually
-	// also marshaled, passed to library code and compared against nil by its
-	// consumers, so moving such a field to [OptionalOf] ripples out of the
-	// configuration package entirely; the pointer is the shape already there.
-	//
-	// It says nothing more than [OptionalOf] does: a nil pointer means no
-	// source provided a value, exactly as an unset carrier does, and null still
-	// never reaches the Go value.
-	//
-	// A pointer *inside* a carrier is not this. "OptionalOf[*C]" spells presence
-	// once, in the carrier, and the pointer is then an ordinary required one.
-	PresencePointer
 )
 
 // String implements [fmt.Stringer].
 func (p Presence) String() string {
-	switch p {
-	case PresenceOptional:
+	if p == PresenceOptional {
 		return "optional"
-	case PresencePointer:
-		return "pointer"
-	default:
-		return "required"
 	}
+	return "required"
 }
 
 // carrierInfo is implemented by [OptionalOf]. It is unexported on purpose:
@@ -93,16 +74,16 @@ func (o *OptionalOf[T]) carrierAddr() unsafe.Pointer { return unsafe.Pointer(&o.
 // not a carrier is required and carries itself.
 //
 // Presence and indirection are separate questions, and a type answers them
-// separately: "OptionalOf[*C]" is an absent-or-present section that is held
-// behind a pointer when it is present. Only the carrier speaks for presence
-// there, so the pointer is an ordinary required one — never nil in a resolved
-// configuration — and means no more than a pointer means anywhere else.
+// separately. [OptionalOf] is the only thing that says a value may be missing;
+// a pointer says only that the value is held behind one, and resolution
+// allocates it. So "*C" is required and "OptionalOf[*C]" is optional, and
+// neither reads the other's meaning into a nil.
 func unwrapCarrier(t reflect.Type) (p Presence, indirect bool, elem reflect.Type) {
 	// A pointer is checked first: the pointer-receiver methods of [OptionalOf]
 	// are in a *OptionalOf's method set, so asking a nil one what it carries
 	// would call a method on it.
 	if t.Kind() == reflect.Pointer {
-		return PresencePointer, false, t.Elem()
+		return PresenceRequired, true, t.Elem()
 	}
 	if c, ok := reflect.New(t).Elem().Interface().(carrierInfo); ok {
 		held := c.carrierElem()

@@ -193,7 +193,7 @@ func TestStackedCarriersRejected(t *testing.T) {
 	}
 
 	_, err := figureout.Derive(func(c *doubled, s *figureout.Schema[doubled]) {
-		figureout.OptionalPtr(s, &c.A, "a")
+		figureout.Value(s, &c.A, "a")
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "absence has to be spelled once")

@@ -360,7 +360,7 @@ func (m *Model) materialize(
 				m.materializeShorthand(f, v, path, a, rep)
 				continue
 			}
-			m.materialize(f.Type.Object, v.FieldByIndex(f.GoPath.Index), path+".", values, res, rep)
+			m.materialize(f.Type.Object, f.acc.descend(v), path+".", values, res, rep)
 		default:
 			m.materializeLeaf(f, v, path, values, rep)
 		}
