@@ -226,6 +226,12 @@ func (m *Model) fold(res *resolution, layer *Layer, rep *Report) {
 			a.Path = path
 		}
 
+		// Erasing an optional section erases what is in it. The members of a
+		// section that is gone are not a section that is half there.
+		if a.State == ValueNull && f != nil && f.OptionalSection() {
+			res.dropSubtree(a.Path)
+		}
+
 		// A [ScalarOr] field written both ways does not merge: the two
 		// spellings describe the same value, so the later one replaces the
 		// other outright rather than half-filling an object.
@@ -290,7 +296,13 @@ func (m *Model) lookup(root reflect.Value, path string) (*FieldModel, reflect.Va
 		}
 		switch {
 		case f.Type.Object != nil:
-			obj, v = f.Type.Object, v.FieldByIndex(f.GoPath.Index)
+			// A section nobody wrote holds no values, so a path into it reports
+			// false rather than reading through an unset carrier.
+			child, ok := f.acc.reach(v)
+			if !ok {
+				return nil, reflect.Value{}, false
+			}
+			obj, v = f.Type.Object, child
 		case f.Type.Union != nil:
 			variant, child, ok := selectedVariant(f, v)
 			if !ok {
@@ -339,6 +351,8 @@ func (m *Model) materialize(
 			m.materializeUnion(f, v, path, values, res, rep)
 		case collection:
 			m.materializeCollection(f, v, path, values, res, rep)
+		case f.OptionalSection():
+			m.materializeOptionalObject(f, v, path, values, res, rep)
 		case f.Type.Object != nil:
 			// A [ScalarOr] field written as a scalar carries a value of its
 			// own, which stands for the whole object.
@@ -346,7 +360,7 @@ func (m *Model) materialize(
 				m.materializeShorthand(f, v, path, a, rep)
 				continue
 			}
-			m.materialize(f.Type.Object, v.FieldByIndex(f.GoPath.Index), path+".", values, res, rep)
+			m.materialize(f.Type.Object, f.acc.descend(v), path+".", values, res, rep)
 		default:
 			m.materializeLeaf(f, v, path, values, rep)
 		}
@@ -535,9 +549,18 @@ func (m *Model) applyDefault(f *FieldModel, v reflect.Value, path string, rep *R
 	}
 	// An absent collection and an empty one are the same statement about the
 	// world, so a list nobody configured resolves to an empty list rather than
-	// to a diagnostic. Required opts back in.
-	if empty, ok := emptyCollection(f.Type); ok && !f.required {
+	// to a diagnostic. Required opts back in, and a carrier already says the
+	// difference itself: a nil "*[]T" is not an empty one.
+	if empty, ok := emptyCollection(f.Type); ok && !f.required && f.Presence == PresenceRequired {
 		if err := f.acc.set(v, empty); err != nil {
+			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
+		}
+		return
+	}
+	// A passthrough nobody wrote is the zero value, written directly: an
+	// interface's zero is an untyped nil, which no assignment can carry.
+	if f.Type.Kind == TypeOpaque && !f.Required() {
+		if err := f.acc.setZero(v); err != nil {
 			rep.diag(f, path, nil, CodeDefaultMismatch, err.Error())
 		}
 		return

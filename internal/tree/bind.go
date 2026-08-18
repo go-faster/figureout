@@ -21,6 +21,13 @@ type ScalarDecoder interface {
 	// takes a string as well as an integer decodes both; it is nil for
 	// values that are not fields, such as list elements.
 	DecodeScalar(t figureout.Type, n *Node, accepts []figureout.Shape) (any, error)
+
+	// DecodeAny converts a whole node into the format's own untyped Go value,
+	// for an opaque subtree no semantic type describes. Structure is the
+	// format's here as much as scalars are — YAML picks a map[any]any as soon
+	// as one key is not a string, JSON never does — so a passthrough carries
+	// exactly what the program it is handed to would have read.
+	DecodeAny(n *Node) (any, error)
 }
 
 // AliasOption adds accepted member names, tried after the primary name.
@@ -91,10 +98,34 @@ func (b Binder) object(
 			continue
 		}
 
+		// A passthrough is bound whole and never descended into, which is what
+		// exempts its subtree from the unknown-member report below.
+		if f.Type.Kind == figureout.TypeOpaque {
+			b.opaque(layer, f, child, path, docPath, pos)
+			continue
+		}
+
 		switch elem, collection := f.Elements(); {
 		case f.Type.Union != nil:
 			b.union(layer, f, child, path, docPath)
 		case f.Type.Object != nil:
+			// Only a carrier can hold "no section": a required object is
+			// materialized whether or not a document declares it, and a group
+			// has no field of its own to be absent from. Which carrier it is
+			// does not matter here — a pointer and an [figureout.OptionalOf]
+			// say the same thing about the section.
+			optional := f.OptionalSection()
+			if child.Kind == Null && optional {
+				// A section a source may leave out may also be erased, which
+				// drops the section rather than emptying it.
+				if !b.AllowNull {
+					b.errorf(layer, path, child.Pos, figureout.CodeSourceUnsupported,
+						"%s does not represent null", b.Source)
+					continue
+				}
+				layer.SetNull(path, b.origin(docPath, pos))
+				continue
+			}
 			if child.Kind != Object {
 				// A ScalarOr field accepts its scalar spelling here; the core
 				// widens it into the object.
@@ -105,6 +136,12 @@ func (b Binder) object(
 				b.errorf(layer, path, child.Pos, figureout.CodeSourceUnsupported,
 					"%s must be an object, got %s", docPath, child.Kind)
 				continue
+			}
+			if optional {
+				// The section is assigned before its members, so a section
+				// whose every member defaults is still a section rather than a
+				// nil pointer.
+				layer.Set(path, figureout.Section{}, b.origin(docPath, pos))
 			}
 			b.object(layer, f.Type.Object, child, path+".", docPath+".", nil)
 		case collection && f.Type.Kind == figureout.TypeList:
@@ -454,6 +491,40 @@ func (b Binder) shorthand(
 	}
 
 	v, err := b.value(short, node, acceptsOf(f, b.Source))
+	if err != nil {
+		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
+			figureout.Redact(f, err.Error(), node.Text, node.Value))
+		return
+	}
+	layer.Set(path, v, origin)
+}
+
+// opaque binds a subtree verbatim, whatever it holds.
+//
+// Nothing here is checked against a shape: the descriptor does not describe
+// what is inside, so there is nothing to check it against, and the field's own
+// Go type is what finally decides whether the value fits.
+func (b Binder) opaque(
+	layer *figureout.Layer,
+	f *figureout.FieldModel,
+	node *Node,
+	path, docPath string,
+	pos Pos,
+) {
+	origin := b.origin(docPath, pos)
+	if node.Kind == Null {
+		// Null stays a merge directive even here: it erases the block rather
+		// than passing a nil through as its contents.
+		if !b.AllowNull {
+			b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported,
+				"%s does not represent null", b.Source)
+			return
+		}
+		layer.SetNull(path, origin)
+		return
+	}
+
+	v, err := b.Decoder.DecodeAny(node)
 	if err != nil {
 		b.errorf(layer, path, node.Pos, figureout.CodeSourceUnsupported, "%s",
 			figureout.Redact(f, err.Error(), node.Text, node.Value))

@@ -141,6 +141,12 @@ func (g *generator) field(f *figureout.FieldModel) *Field {
 		}
 	}
 	row.Constraints = g.constraints(f)
+	// A passthrough is documented as one rather than omitted: a reader who
+	// finds the key in a file has to learn from somewhere that nothing here
+	// checks it.
+	if reason, ok := f.Opaque(); ok && row.Doc == "" {
+		row.Doc = reason
+	}
 	return row
 }
 
@@ -249,6 +255,12 @@ func lengthProse(t figureout.Type, c figureout.LengthConstraint) string {
 // what it is written as, because the unit is the only thing that says what the
 // number counts.
 func typeName(t figureout.Type) string {
+	// A type that parses itself from text keeps its semantic kind and gains a
+	// spelling, so the page names both rather than the one a reader would not
+	// have guessed.
+	if t.Text && t.Kind != figureout.TypeString {
+		return t.Kind.String() + " or string"
+	}
 	switch t.Kind {
 	case figureout.TypeDuration:
 		if t.Unit > 0 {
@@ -265,6 +277,8 @@ func typeName(t figureout.Type) string {
 			return "map of " + elemName(*t.Key) + " to " + elemName(*t.Elem)
 		}
 		return "map"
+	case figureout.TypeOpaque:
+		return "passthrough"
 	case figureout.TypeObject:
 		if t.Scalar != nil {
 			return typeName(*t.Scalar) + " or object"

@@ -22,6 +22,13 @@ type decoder struct{}
 
 // DecodeScalar implements [tree.ScalarDecoder].
 func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureout.Shape) (any, error) {
+	// A type that parses itself from text takes the string spelling, exactly as
+	// encoding/json hands it one: a JSON number is still a number, and the
+	// kinded parser below reads it into the underlying type.
+	if s, ok := n.Value.(string); ok && t.Text {
+		return scalar.ParseText(t, s, "")
+	}
+
 	switch t.Kind {
 	case figureout.TypeBoolean:
 		b, ok := n.Value.(bool)
@@ -74,6 +81,53 @@ func (d decoder) DecodeScalar(t figureout.Type, n *tree.Node, accepts []figureou
 	default:
 		return nil, errors.Errorf("cannot decode a %s from JSON", t.Kind)
 	}
+}
+
+// DecodeAny implements [tree.ScalarDecoder].
+//
+// A JSON object is always string-keyed, so a passthrough is map[string]any all
+// the way down. A number keeps its integer spelling where it has one:
+// encoding/json would hand back a float64, and a passthrough carrying an
+// identifier or a byte count must not lose digits on the way through.
+func (d decoder) DecodeAny(n *tree.Node) (any, error) {
+	switch n.Kind {
+	case tree.Null:
+		return nil, nil
+	case tree.Array:
+		out := make([]any, 0, len(n.Items))
+		for i, item := range n.Items {
+			v, err := d.DecodeAny(item)
+			if err != nil {
+				return nil, errors.Wrapf(err, "element %d", i)
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	case tree.Object:
+		out := make(map[string]any, len(n.Fields))
+		for _, f := range n.Fields {
+			v, err := d.DecodeAny(f.Value)
+			if err != nil {
+				return nil, errors.Wrapf(err, "key %q", f.Key)
+			}
+			out[f.Key] = v
+		}
+		return out, nil
+	default:
+	}
+
+	num, ok := n.Value.(json.Number)
+	if !ok {
+		return n.Value, nil
+	}
+	if i, err := num.Int64(); err == nil {
+		return i, nil
+	}
+	f, err := num.Float64()
+	if err != nil {
+		return nil, errors.Errorf("invalid number %q", num)
+	}
+	return f, nil
 }
 
 // scaled reads a JSON number as a count of the field's declared unit.

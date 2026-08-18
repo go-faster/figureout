@@ -77,13 +77,21 @@ type InvariantModel struct {
 func (m *Model) Invariants() []InvariantModel { return m.invariants }
 
 // lift re-roots a nested schema's invariants onto the parent.
-func lift(invariants []invariant, name string, index []int) []invariant {
+func lift(invariants []invariant, name string, acc accessor) []invariant {
 	out := make([]invariant, 0, len(invariants))
 	for _, inv := range invariants {
 		out = append(out, invariant{
 			name:   name + "." + inv.name,
 			prefix: joinPath(name, inv.prefix),
-			check:  func(rv reflect.Value) error { return inv.check(rv.FieldByIndex(index)) },
+			check: func(rv reflect.Value) error {
+				fv, ok := acc.reach(rv)
+				if !ok {
+					// A rule about the members of a section nobody wrote has
+					// nothing to be violated by.
+					return nil
+				}
+				return inv.check(fv)
+			},
 		})
 	}
 	return out

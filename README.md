@@ -344,6 +344,9 @@ figureout.Optional(s, &c.Timeout, "timeout").AtLeast(time.Second)  // T = time.D
 The type carries the `Of` suffix so the plain name stays free for the
 function. `Value` and `Explicit` reject a carrier field with a diagnostic
 naming the function to use instead, so the two cannot be mixed up silently.
+Stacking carriers — a `*OptionalOf[T]`, an `OptionalOf[OptionalOf[T]]` — is
+rejected outright: which of the two nils means missing has no defensible
+answer.
 
 **What absence means is the registration function, not a modifier.** A plain
 field is one of two things, and the call site says which:
@@ -372,8 +375,96 @@ or mark it Required, so absence is an error
 ```
 
 `Value(...).Required()` is `Explicit` spelled the long way, and `ApplyDefault`
-replaces the fallback with a value of your own. Optionality itself lives in the
-Go type, never in a pointer.
+replaces the fallback with a value of your own.
+
+**A section is optional the same way a scalar is.** `OptionalObject` and
+`OptionalObjectFunc` register a nested object a source may leave out, and the
+carrier is what distinguishes what a zero struct cannot: "there is no cache" is
+not "there is a cache and every one of its fields defaulted".
+
+```go
+type Config struct {
+	Cache figureout.OptionalOf[CacheConfig]
+}
+
+figureout.OptionalObjectFunc(s, &c.Cache, "cache", func(c *CacheConfig, s *figureout.Schema[CacheConfig]) {
+	figureout.Explicit(s, &c.Dir, "dir")
+	figureout.Value(s, &c.Bytes, "bytes").ApplyDefault(1024)
+})
+```
+
+`cache: {}` and no `cache` key are different statements, and both resolve to
+what they say: the first is a section whose every member defaulted, the second
+is no section. A nesting source marks the section itself; a flat source such as
+environment variables has no name for it, so there a section is present whenever
+it provided a member — the same statement in the only way that source can make
+it.
+
+Absence materializes nothing inside, which is what makes `Explicit` *within* an
+optional section mean something: `dir` is demanded where the section is present
+and nowhere else. An explicit null erases the section along with whatever
+earlier layers put in it.
+
+**A pointer is indirection, and nothing else.** `OptionalOf` is the only thing
+that says a value may be missing. A pointer says only that the value is held
+behind one, so a `*C` field is required like any other: resolution allocates it,
+and it is never nil in a resolved configuration.
+
+```go
+type Config struct {
+	S3      *S3Config                            // always there, held by pointer
+	Cache   figureout.OptionalOf[*CacheConfig]   // may be missing, held by pointer
+}
+
+figureout.ObjectFunc(s, &c.S3, "s3", describeS3)
+figureout.OptionalObjectFunc(s, &c.Cache, "cache", describeCache)
+```
+
+That is the whole rule, and it is why there is no `OptionalPtr`: a nil pointer
+never means "no value". A configuration being *adopted* that spells presence as
+`*T` converts the field to a carrier rather than teaching the pointer a second
+meaning — `OptionalOf[T]` where the pointer was only ever standing in for
+absence, `OptionalOf[*T]` where consumers also want the pointer. The carrier
+marshals as the value it holds in both JSON and YAML (missing is `null`), so
+converting does not change how the struct serializes.
+
+A pointer to a *scalar* is refused outright. It is not presence, and a scalar
+has no identity or size a pointer would preserve, so it buys nothing and costs
+pointer-typed constraints:
+
+```text
+field.unsupported_type [retries]: Config.Retries is a pointer to a scalar;
+write the value itself, or OptionalOf[int] if it may be missing
+```
+
+Two carriers are two answers to one question, so a second one below the first is
+refused wherever it sits — `*OptionalOf[T]`, `OptionalOf[OptionalOf[T]]` — and so
+is a `**T`, whose second nil answers nothing either.
+
+The two optional carriers are one presence spelled two ways, and
+`OptionalObject`/`OptionalObjectFunc` take either:
+
+| Field | Section is | Held |
+|---|---|---|
+| `OptionalOf[C]` | absent unless a source contained it | inline |
+| `OptionalOf[*C]` | absent unless a source contained it | behind a pointer resolution allocates |
+
+A `Group` is never one: it nests the document without nesting the Go
+struct, so it has no field to be absent from.
+
+An optional *section* is the part a zero struct cannot express:
+
+```yaml
+# no cache key      -> unset
+cache: {}           # -> set, a section that defaulted throughout
+cache: {dir: /x}    # -> set, with dir
+cache: null         # -> unset, and whatever an earlier layer put in it is gone
+```
+
+A member registered with `Explicit` is demanded where the section is present
+and nowhere else, which is what makes "required inside an optional section"
+mean something. A source with no nesting has no name for the section itself, so
+there a section is present whenever any of its members is.
 
 **A collection has a fallback of its own.** An absent list and an empty one are
 the same statement about the world, so a list or map nobody configured resolves
@@ -463,6 +554,38 @@ strings, with their defaults and bounds spelled the way a source accepts them.
 
 Because the duration spelling keeps working, migrating away is two safe steps:
 add the unit, then add the duration-spelled key and deprecate the old one.
+
+## A type that parses itself
+
+A named scalar carrying its own `UnmarshalText` decides what its spellings
+mean, and figureout defers to it. No registration is involved: implementing
+`encoding.TextUnmarshaler` is the declaration.
+
+```go
+type Bytes int64   // UnmarshalText reads "256MiB"
+type Level int8    // UnmarshalText reads "debug"
+```
+
+```yaml
+max_bytes: 256MiB     # the type's parser
+max_bytes: 256        # the type's parser, which also takes a bare count
+ch_log_level: debug   # the type's parser
+ch_log_level: 1       # unrecognized level "1" — an error, at ch_log_level
+```
+
+That last line is the reason this is not merely a convenience. Bound as the
+`int8` underneath it, `1` resolves cleanly to `warn`, and a document loads
+meaning something other than what it says. The type rejects it, so the
+descriptor does.
+
+The underlying kind still sets the semantic type, so constraints stay typed as
+`Bytes` and the schema keeps its `integer` — with `string` alongside it,
+because that is the other thing the field accepts. YAML hands the type the
+scalar's text whatever its resolved tag; JSON hands it a string and reads a
+number as the underlying kind, which is what `encoding/json` does with the same
+type. Only a named scalar qualifies: a struct or a slice is a shape a
+descriptor can describe, and collapsing it to text would hide the description
+rather than add one.
 
 ## Secrets
 
@@ -674,6 +797,39 @@ still bind under it (`AUTH_TOKEN_FILE`).
 The two spellings never half-merge across layers. A widened scalar stands for
 the whole object, so whichever spelling a later layer uses replaces the other
 outright.
+
+## Another program's configuration
+
+A configuration that embeds another program's has a block it cannot describe
+and must not validate. `Opaque` carries it verbatim:
+
+```go
+// an OpenTelemetry Collector configuration, handed to the collector as-is
+Collector map[string]any `yaml:"otelcol"`
+
+figureout.Opaque(s, &c.Collector, "otelcol",
+	figureout.Reason("handed to the collector verbatim"))
+```
+
+The field decodes to whatever the document held — objects as `map[string]any`,
+arrays as `[]any`, scalars as the format resolved them, so a quoted `"512"`
+stays a string — and its whole subtree is exempt from
+`DisallowUnknownFields()`. That exemption is the load-bearing part: strict
+decoding is why a descriptor is worth adopting, and a passthrough is precisely
+where strictness has to stop, because figureout cannot know which keys the
+other program accepts and a version skew in *that* program is not this one's
+business.
+
+`Reason` is therefore required, so the hole reads as one at the declaration
+site. It is documentation: JSON Schema emits a permissive object carrying it,
+the Markdown reference renders the field as a documented passthrough rather
+than omitting it, and a source with no nesting skips it the way it skips a
+collection of objects.
+
+Nothing inside a passthrough has a name, a constraint, a default, provenance or
+a schema. It is not an escape hatch for a block whose shape is yours to state —
+reach for `ObjectFunc` there. `Ignore` remains the other end: it drops the
+value, `Opaque` passes it through.
 
 ## Reference documentation
 
