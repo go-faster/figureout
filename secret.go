@@ -20,11 +20,14 @@ const Redacted = "[redacted]"
 //
 //	figureout.Explicit(s, &c.Token, "token", figureout.Secret()).NonEmpty()
 //
-// Secret implies [Hidden]. Generated JSON Schema marks the property
-// "writeOnly".
+// Secret redacts values, not names. A credential still appears in generated
+// documentation, because its name is what an operator needs in order to supply
+// it, while its default and examples render as [Redacted]. Pair it with
+// [Hidden] to leave a field out of the reference entirely. Generated JSON
+// Schema marks the property "writeOnly".
 func Secret() FieldOption {
 	return FieldOptionFunc(func(c FieldOptionContext) error {
-		return c.AddMetadata(Metadata{Secret: true, Hidden: true})
+		return c.AddMetadata(Metadata{Secret: true})
 	})
 }
 

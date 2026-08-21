@@ -8,6 +8,7 @@
 | [`storage`](#storage-type-s3) | union | yes |  |  |  | `storage` |  | Where the service keeps its data. |
 | [`sites`](#sites) | list of object | no |  |  |  | `sites` |  | Served sites. |
 | `level` | string | no | `"info"` | `"debug"`, `"info"` |  | `level` | `APP_LEVEL` | Log verbosity. |
+| `token` | string | no | `[redacted]` |  |  | `token` | `APP_TOKEN` | API token. **Secret.** |
 | `tags` | list of string | no | `[]` |  | checked by sorted; at most 8 items | `tags` | `APP_TAGS` | Tags applied to every metric. |
 | `retries` | integer | no | `3` (documented) |  |  | `retries` | `APP_RETRIES` | Retry budget; unset means the client default. |
 | `region` | string | no | `"eu-west-1"` |  |  | `region` | `APP_REGION` | Deployment region. |

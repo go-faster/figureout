@@ -203,13 +203,14 @@ func TestAnchorsAreUnique(t *testing.T) {
 	}
 }
 
-// TestSecretIsNotDocumented follows the core's stance: Secret implies Hidden,
-// so a credential is neither named nor valued here.
-func TestSecretIsNotDocumented(t *testing.T) {
+// TestSecretIsNamedButNeverValued follows the core's stance: Secret redacts
+// values rather than names, so a credential is documented and its value is not.
+func TestSecretIsNamedButNeverValued(t *testing.T) {
 	data, _, err := docs.Generate(configDescriptor)
 	require.NoError(t, err)
-	require.NotContains(t, string(data), "s3cret")
-	require.NotContains(t, string(data), "token")
+	require.NotContains(t, string(data), "s3cret", "a documented value is a leaked one")
+	require.Contains(t, string(data), "token", "an operator cannot supply what is not named")
+	require.Contains(t, string(data), "**Secret.**", "the row must say it carries a credential")
 }
 
 // TestUnionRendersEveryVariant covers the tag that selects each one, which is
