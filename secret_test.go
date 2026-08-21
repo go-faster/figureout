@@ -77,11 +77,14 @@ func TestSecretMarksTheReport(t *testing.T) {
 	require.Equal(t, []string{"token"}, slices.Sorted(report.Secrets()))
 }
 
-func TestSecretImpliesHidden(t *testing.T) {
+// TestSecretDoesNotImplyHidden pins the split: Secret redacts values, Hidden
+// removes a field from the reference, and a credential needs the first without
+// the second so an operator can discover what to supply.
+func TestSecretDoesNotImplyHidden(t *testing.T) {
 	f, ok := secretDescriptor(t).Model().FieldByPath("token")
 	require.True(t, ok)
 	require.True(t, f.Meta.Secret)
-	require.True(t, f.Meta.Hidden)
+	require.False(t, f.Meta.Hidden)
 }
 
 func TestSecretSchema(t *testing.T) {
